@@ -1,0 +1,22 @@
+{
+  "operator": {
+    "icCode": "",
+    "copCode": "",
+    "operName": ""
+  },
+  "exportEnterprise": {
+    "name": "",
+    "customsCode": "",
+    "socialCreditCode": ""
+  },
+  "applicantEnterprise": {
+    "name": "",
+    "customsCode": "",
+    "socialCreditCode": ""
+  },
+  "supervisingCustomsCode": "",
+  "maxImageBytes": 2359296,
+  "uploadTypeCode": "F",
+  "p0FilePath": "",
+  "includeP0": false
+}
