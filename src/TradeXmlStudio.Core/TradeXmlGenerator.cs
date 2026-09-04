@@ -13,6 +13,7 @@ public sealed class TradeXmlGenerator
     private static readonly XNamespace Ns = ContractNamespace;
     private static readonly UTF8Encoding Utf8WithoutBom = new(false);
     private static readonly string[] PhotoBizTypeCodes = ["A1", "A2", "A3", "A4"];
+    private static readonly string[] BatchPhotoBizTypeCodes = ["A1", "A2", "A3", "A4", "B1"];
     private static int _clientSequenceCounter = Environment.TickCount & int.MaxValue;
     private static long _edocSequenceCounter = DateTime.UtcNow.Ticks & long.MaxValue;
     private static long _fileTimestampTicks = DateTime.Now.Ticks;
@@ -75,15 +76,23 @@ public sealed class TradeXmlGenerator
         string proBatchNumber,
         DateTimeOffset generatedAt,
         TradeXmlOptions options,
-        bool overwrite)
+        bool overwrite,
+        int expectedPhotoCount = 4)
     {
-        var errors = ValidateBatchRequest(items, outputFolderPath, seqNo, proBatchNumber, options);
+        var errors = ValidateBatchRequest(
+            items,
+            outputFolderPath,
+            seqNo,
+            proBatchNumber,
+            options,
+            expectedPhotoCount);
         if (errors.Count > 0)
         {
             throw new XmlGenerationException(errors);
         }
 
-        var batchEdocs = new List<BatchEdoc>(items.Count * PhotoBizTypeCodes.Length + 1);
+        var photoBizTypeCodes = GetBatchPhotoBizTypeCodes(expectedPhotoCount);
+        var batchEdocs = new List<BatchEdoc>(items.Count * photoBizTypeCodes.Count + 1);
         foreach (var item in items)
         {
             var photos = item.PhotoPaths.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToList();
@@ -93,7 +102,7 @@ public sealed class TradeXmlGenerator
                 var source = new EdocSource(
                     Path.GetFileName(path),
                     path,
-                    PhotoBizTypeCodes[index],
+                    photoBizTypeCodes[index],
                     GetAttachmentType(path),
                     false);
                 batchEdocs.Add(new BatchEdoc(item.LotId, source, CreateEdocId(source, generatedAt, options)));
@@ -152,6 +161,18 @@ public sealed class TradeXmlGenerator
             StringComparer.Ordinal);
         return new BatchXmlGenerationResult(sharedResults, lotResults);
     }
+
+    public static IReadOnlyList<string> GetBatchPhotoBizTypeCodes(int photoCount) =>
+        photoCount switch
+        {
+            3 => BatchPhotoBizTypeCodes[..3],
+            4 => BatchPhotoBizTypeCodes[..4],
+            5 => BatchPhotoBizTypeCodes[..5],
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(photoCount),
+                photoCount,
+                "批量图片张数只支持 3、4 或 5 张。")
+        };
 
     public XmlGenerationResult GenerateP0ToFile(
         TradeXmlOptions options,
@@ -370,11 +391,12 @@ public sealed class TradeXmlGenerator
         DateTimeOffset generatedAt,
         TradeXmlOptions options)
     {
-        var serial = ((Interlocked.Increment(ref _edocSequenceCounter) & long.MaxValue) % 100_000_000_000_000L)
-            .ToString("D14", CultureInfo.InvariantCulture);
-        return generatedAt.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-            + source.BizTypeCode.Trim()
+        var serial = (Interlocked.Increment(ref _edocSequenceCounter) & long.MaxValue)
+            .ToString("D20", CultureInfo.InvariantCulture);
+        return options.ExportEnterprise.SocialCreditCode.Trim()
             + options.SupervisingCustomsCode.Trim()
+            + source.BizTypeCode.Trim()
+            + generatedAt.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture)
             + serial;
     }
 
@@ -512,13 +534,20 @@ public sealed class TradeXmlGenerator
         string outputFolderPath,
         string seqNo,
         string proBatchNumber,
-        TradeXmlOptions options)
+        TradeXmlOptions options,
+        int expectedPhotoCount)
     {
         var errors = new List<string>();
         ValidateOutputFolder(outputFolderPath, errors);
         ValidateRequiredLength(seqNo, "通知编号", 50, errors);
         ValidateRequiredLength(proBatchNumber, "生产批次号", 50, errors);
         ValidateOperatorAndEnterprises(options, errors);
+
+        var hasSupportedPhotoCount = expectedPhotoCount is 3 or 4 or 5;
+        if (!hasSupportedPhotoCount)
+        {
+            errors.Add("批量图片张数只支持 3、4 或 5 张。");
+        }
 
         if (items.Count == 0)
         {
@@ -543,7 +572,10 @@ public sealed class TradeXmlGenerator
                 errors.Add($"箱号 {item.LotId} 的商品项号必须为数字。");
             }
             ValidateRequiredLength(item.LotId, "箱号", 255, errors);
-            ValidatePhotoCount(item.PhotoPaths.Count, errors);
+            if (hasSupportedPhotoCount)
+            {
+                ValidateBatchPhotoCount(item.PhotoPaths.Count, expectedPhotoCount, errors);
+            }
             foreach (var photo in item.PhotoPaths.Where(photo => !File.Exists(photo)))
             {
                 errors.Add($"照片不存在：{photo}");
@@ -557,6 +589,19 @@ public sealed class TradeXmlGenerator
         }
         ValidateAttachmentSizes(attachments, options, errors);
         return errors;
+    }
+
+    private static void ValidateBatchPhotoCount(int count, int expectedPhotoCount, List<string> errors)
+    {
+        var bizTypeCodes = string.Join("、", GetBatchPhotoBizTypeCodes(expectedPhotoCount));
+        if (count == 0)
+        {
+            errors.Add($"没有匹配到照片（需要 {expectedPhotoCount} 张：{bizTypeCodes}）。");
+        }
+        else if (count != expectedPhotoCount)
+        {
+            errors.Add($"照片数量必须为 {expectedPhotoCount} 张（{bizTypeCodes}），当前 {count} 张。");
+        }
     }
 
     private static void ValidatePhotoCount(int count, List<string> errors)

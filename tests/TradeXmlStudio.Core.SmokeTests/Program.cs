@@ -167,8 +167,19 @@ static void TestXmlGeneration(string root)
     Assert(metadata.Count == 5, "ELBP004 should reference P0 and A1-A4 metadata");
     Assert(metadata.Select(edoc => edoc.Element(ns + "BizTypeCode")?.Value).SequenceEqual(["A1", "A2", "A3", "A4", "P0"]),
         "ELBP004 attachment order should be A1-A4 followed by the shared P0");
-    Assert(metadata.All(edoc => edoc.Element(ns + "EdocID")?.Value.Length == 28),
-        "every EdocID should follow the 28-character reference rule");
+    var edocIds = metadata
+        .Select(edoc => edoc.Element(ns + "EdocID")?.Value ?? string.Empty)
+        .ToList();
+    var expectedEdocPrefixes = new[] { "A1", "A2", "A3", "A4", "P0" }
+        .Select(code => $"91350781MA2YGJK59J3503{code}20260804123456789")
+        .ToList();
+    Assert(edocIds.Zip(expectedEdocPrefixes).All(pair =>
+            pair.First.StartsWith(pair.Second, StringComparison.Ordinal)
+            && pair.First.Length == pair.Second.Length + 20
+            && pair.First[^20..].All(char.IsDigit)),
+        "every EdocID should contain enterprise code, customs code, attachment code, timestamp, and a 20-digit serial number");
+    Assert(edocIds.Distinct(StringComparer.Ordinal).Count() == edocIds.Count,
+        "every EdocID should be unique");
     Assert(metadata[^1].Element(ns + "LotId")?.Value == "" && metadata.Take(4).All(edoc => edoc.Element(ns + "LotId")?.Value == "BOX00123"),
         "P0 should be batch-level while photos should reference the lot ID");
 
@@ -178,7 +189,7 @@ static void TestXmlGeneration(string root)
     Assert(attachmentDocuments.All(document => document.Root?.Elements(ns + "Edoc").Count() == 1),
         "each ELBP005 should contain exactly one Edoc");
     Assert(attachmentDocuments.Select(document => document.Root!.Element(ns + "Edoc")!.Element(ns + "EdocID")!.Value)
-            .SequenceEqual(metadata.Select(edoc => edoc.Element(ns + "EdocID")!.Value)),
+            .SequenceEqual(edocIds),
         "ELBP004 and ELBP005 should share identical EdocIDs");
     Assert(attachmentDocuments.All(document => document.Root!.Element(ns + "Edoc")!.Element(ns + "FileContent") is not null),
         "each ELBP005 should carry Base64 file content");
@@ -296,6 +307,62 @@ static void TestBatchXmlGeneration(string root)
         .Order()
         .ToList();
     Assert(metadataIds.SequenceEqual(attachmentIds), "ELBP004 metadata IDs should match all batch ELBP005 IDs");
+
+    foreach (var photoCount in new[] { 3, 5 })
+    {
+        var variableEntry = new ExcelBatchEntry(800 + photoCount, $"PHOTO-COUNT-{photoCount}");
+        var variableRoot = Path.Combine(root, $"batch-{photoCount}-photos");
+        var variableFolder = Path.Combine(variableRoot, variableEntry.LotId);
+        var variableOutput = Path.Combine(root, $"batch-{photoCount}-output");
+        Directory.CreateDirectory(variableFolder);
+        Directory.CreateDirectory(variableOutput);
+        for (var index = 1; index <= photoCount; index++)
+        {
+            File.WriteAllBytes(Path.Combine(variableFolder, $"{index}.jpg"), [(byte)'v', (byte)index]);
+        }
+
+        var batchGenerator = new ExcelBatchGenerator();
+        var preview = batchGenerator.Preview(
+            [variableEntry],
+            variableRoot,
+            BatchFolderMode.SmallFolders,
+            photoCount).Single();
+        Assert(preview.Success && preview.PhotoCount == photoCount,
+            $"the {photoCount}-photo batch option should be ready when the folder has exactly {photoCount} photos");
+
+        var variableResults = batchGenerator.RunBatch(
+            [variableEntry],
+            variableRoot,
+            variableOutput,
+            BatchFolderMode.SmallFolders,
+            "20260813164003000645181692",
+            "L20260813163543000645178869",
+            DateTimeOffset.Parse("2026-08-14T01:37:30-07:00"),
+            options,
+            false,
+            photoCount);
+        Assert(variableResults.Single().Success, $"the {photoCount}-photo batch should generate successfully");
+
+        var expectedCodes = photoCount == 3
+            ? new[] { "A1", "A2", "A3" }
+            : ["A1", "A2", "A3", "A4", "B1"];
+        var variableFiles = Directory.GetFiles(variableOutput, "*.xml");
+        Assert(variableFiles.Length == photoCount + 2,
+            $"the {photoCount}-photo batch should create ELBP004, P0 and {photoCount} photo ELBP005 files");
+        Assert(expectedCodes.All(code => variableFiles.Any(path =>
+                Path.GetFileName(path).StartsWith($"{variableEntry.LotId}_{code}_", StringComparison.Ordinal))),
+            $"the {photoCount}-photo batch filenames should use the requested business type codes");
+
+        var variableMainPath = variableFiles.Single(path =>
+            Path.GetFileName(path).StartsWith("ELBP004_", StringComparison.Ordinal));
+        var variableMetadata = XDocument.Load(variableMainPath).Root?
+            .Element(ns + "Edocs")?
+            .Elements(ns + "Edoc")
+            .Select(edoc => edoc.Element(ns + "BizTypeCode")?.Value)
+            .ToList() ?? [];
+        Assert(variableMetadata.SequenceEqual(expectedCodes.Append("P0")),
+            $"the {photoCount}-photo ELBP004 metadata should use the requested business type codes followed by P0");
+    }
 }
 
 static void CreateWorkbook(string path)

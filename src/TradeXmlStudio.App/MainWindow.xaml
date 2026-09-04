@@ -108,6 +108,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="Excel 文件" />
@@ -136,9 +137,17 @@
                             <ComboBoxItem Content="所有照片位于一个大文件夹（数字前缀匹配箱号尾号）" />
                         </ComboBox>
 
-                        <TextBlock Grid.Row="6" Style="{StaticResource FieldLabel}" Text="输出目录" />
-                        <TextBox x:Name="BatchOutputFolderTextBox" Grid.Row="6" Grid.Column="1" Margin="0,4" />
-                        <Button Grid.Row="6" Grid.Column="2" Content="浏览…" Click="BrowseBatchOutputFolder_Click" />
+                        <TextBlock Grid.Row="6" Style="{StaticResource FieldLabel}" Text="本批上传张数" />
+                        <ComboBox x:Name="BatchPhotoCountComboBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
+                                  SelectedIndex="1" SelectionChanged="BatchPhotoCount_Changed">
+                            <ComboBoxItem Content="3 张（A1、A2、A3）" />
+                            <ComboBoxItem Content="4 张（A1、A2、A3、A4）" />
+                            <ComboBoxItem Content="5 张（A1、A2、A3、A4、B1）" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="7" Style="{StaticResource FieldLabel}" Text="输出目录" />
+                        <TextBox x:Name="BatchOutputFolderTextBox" Grid.Row="7" Grid.Column="1" Margin="0,4" />
+                        <Button Grid.Row="7" Grid.Column="2" Content="浏览…" Click="BrowseBatchOutputFolder_Click" />
                     </Grid>
 
                     <TextBlock Grid.Row="1" Text="批量预览（B 列序号，C 列箱号）"

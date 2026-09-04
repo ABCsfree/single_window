@@ -227,6 +227,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void BatchPhotoCount_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isReady)
+        {
+            RefreshBatchPreview();
+        }
+    }
+
     private async void GenerateBatch_Click(object sender, RoutedEventArgs e)
     {
         // Always reread Excel here. This allows users to save workbook changes
@@ -240,6 +248,8 @@ public partial class MainWindow : Window
         var outputFolder = BatchOutputFolderTextBox.Text.Trim();
         var seqNo = BatchSeqNoTextBox.Text.Trim();
         var proBatchNumber = BatchProBatchNumberTextBox.Text.Trim();
+        var expectedPhotoCount = GetBatchPhotoCount();
+        var photoBizTypeText = string.Join("、", TradeXmlGenerator.GetBatchPhotoBizTypeCodes(expectedPhotoCount));
         if (_batchEntries.Count == 0)
         {
             ShowError("没有可生成的行。请保存 Excel，并确认所选工作表的 C 列包含箱号。");
@@ -277,7 +287,8 @@ public partial class MainWindow : Window
         }
 
         if (MessageBox.Show(this,
-                $"将处理 {_batchEntries.Count} 行；整批生成 1 份 ELBP004、最多 1 份 P0，每个有效箱号生成 A1-A4 共 4 份 ELBP005。是否继续？",
+                $"将处理 {_batchEntries.Count} 行；整批生成 1 份 ELBP004、最多 1 份 P0，"
+                + $"每个有效箱号生成 {photoBizTypeText} 共 {expectedPhotoCount} 份 ELBP005。是否继续？",
                 "确认批量生成",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -294,7 +305,16 @@ public partial class MainWindow : Window
             var options = BuildOptions();
             var generatedAt = DateTimeOffset.Now;
             var results = await Task.Run(() => _batchGenerator.RunBatch(
-                entries, bigFolder, outputFolder, mode, seqNo, proBatchNumber, generatedAt, options, true));
+                entries,
+                bigFolder,
+                outputFolder,
+                mode,
+                seqNo,
+                proBatchNumber,
+                generatedAt,
+                options,
+                true,
+                expectedPhotoCount));
             BatchResultListView.ItemsSource = results;
 
             var successCount = results.Count(result => result.Success);
@@ -351,8 +371,13 @@ public partial class MainWindow : Window
         try
         {
             _batchEntries = _batchGenerator.ReadEntries(excelPath, sheetName!).ToList();
-            BatchResultListView.ItemsSource = _batchGenerator.Preview(_batchEntries, bigFolder, GetBatchFolderMode());
-            SetStatus($"已读取 {_batchEntries.Count} 行，预览就绪。");
+            var expectedPhotoCount = GetBatchPhotoCount();
+            BatchResultListView.ItemsSource = _batchGenerator.Preview(
+                _batchEntries,
+                bigFolder,
+                GetBatchFolderMode(),
+                expectedPhotoCount);
+            SetStatus($"已读取 {_batchEntries.Count} 行；本批每箱上传 {expectedPhotoCount} 张，预览就绪。");
             return true;
         }
         catch (Exception ex)
@@ -492,6 +517,14 @@ public partial class MainWindow : Window
             1 => BatchFolderMode.SerialSmallFolders,
             2 => BatchFolderMode.SingleBigFolder,
             _ => BatchFolderMode.SmallFolders
+        };
+
+    private int GetBatchPhotoCount() =>
+        BatchPhotoCountComboBox.SelectedIndex switch
+        {
+            0 => 3,
+            2 => 5,
+            _ => 4
         };
 
     private bool TryPickFolder(string title, string currentPath, out string folder)

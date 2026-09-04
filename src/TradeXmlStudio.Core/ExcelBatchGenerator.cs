@@ -17,9 +17,11 @@ public sealed class ExcelBatchGenerator(
     public IReadOnlyList<ExcelBatchItemResult> Preview(
         IReadOnlyList<ExcelBatchEntry> entries,
         string bigFolderPath,
-        BatchFolderMode mode)
+        BatchFolderMode mode,
+        int expectedPhotoCount = 4)
     {
-        return entries.Select(entry => PreviewOne(entry, bigFolderPath, mode)).ToList();
+        _ = TradeXmlGenerator.GetBatchPhotoBizTypeCodes(expectedPhotoCount);
+        return entries.Select(entry => PreviewOne(entry, bigFolderPath, mode, expectedPhotoCount)).ToList();
     }
 
     public IReadOnlyList<ExcelBatchItemResult> RunBatch(
@@ -31,8 +33,11 @@ public sealed class ExcelBatchGenerator(
         string proBatchNumber,
         DateTimeOffset generatedAt,
         TradeXmlOptions options,
-        bool overwrite)
+        bool overwrite,
+        int expectedPhotoCount = 4)
     {
+        var photoBizTypeCodes = TradeXmlGenerator.GetBatchPhotoBizTypeCodes(expectedPhotoCount);
+        var photoBizTypeText = string.Join("、", photoBizTypeCodes);
         var results = new ExcelBatchItemResult?[entries.Count];
         var prepared = new List<(int Index, ExcelBatchEntry Entry, string PhotoFolder, IReadOnlyList<string> Photos)>();
         var processedLotIds = new HashSet<string>(StringComparer.Ordinal);
@@ -60,7 +65,7 @@ public sealed class ExcelBatchGenerator(
                     entry.Serial, entry.LotId, photoFolder, 0, "失败", "小文件夹不存在。", false);
                 continue;
             }
-            if (photos.Count != 4)
+            if (photos.Count != expectedPhotoCount)
             {
                 results[index] = new ExcelBatchItemResult(
                     entry.Serial,
@@ -68,7 +73,7 @@ public sealed class ExcelBatchGenerator(
                     photoFolder,
                     photos.Count,
                     "失败",
-                    $"照片数量必须为 4 张（A1-A4），当前 {photos.Count} 张。",
+                    $"照片数量必须为 {expectedPhotoCount} 张（{photoBizTypeText}），当前 {photos.Count} 张。",
                     false);
                 continue;
             }
@@ -108,12 +113,14 @@ public sealed class ExcelBatchGenerator(
                     proBatchNumber,
                     generatedAt,
                     options,
-                    overwrite);
+                    overwrite,
+                    expectedPhotoCount);
 
                 foreach (var item in prepared)
                 {
                     var lotFiles = generated.LotResults[item.Entry.LotId];
-                    var detail = $"4 个 ELBP005：{string.Join(", ", lotFiles.Select(file => Path.GetFileName(file.OutputPath)))}";
+                    var detail = $"{expectedPhotoCount} 个 ELBP005（{photoBizTypeText}）："
+                        + string.Join(", ", lotFiles.Select(file => Path.GetFileName(file.OutputPath)));
                     results[item.Index] = new ExcelBatchItemResult(
                         item.Entry.Serial,
                         item.Entry.LotId,
@@ -177,17 +184,21 @@ public sealed class ExcelBatchGenerator(
             && prefix == suffix;
     }
 
-    private static ExcelBatchItemResult PreviewOne(ExcelBatchEntry entry, string bigFolderPath, BatchFolderMode mode)
+    private static ExcelBatchItemResult PreviewOne(
+        ExcelBatchEntry entry,
+        string bigFolderPath,
+        BatchFolderMode mode,
+        int expectedPhotoCount)
     {
         var folder = ResolvePhotoFolder(bigFolderPath, entry, mode);
         var photos = GetPhotoPaths(bigFolderPath, entry, mode);
         var status = IsSmallFolderMode(mode) && !Directory.Exists(folder)
             ? "小文件夹不存在"
-            : photos.Count == 4
+            : photos.Count == expectedPhotoCount
                 ? "就绪"
                 : photos.Count == 0
                     ? IsSmallFolderMode(mode) ? "无照片" : "无匹配照片"
-                    : $"照片数量异常（{photos.Count}）";
+                    : $"照片数量异常（当前 {photos.Count}，需要 {expectedPhotoCount}）";
         return new ExcelBatchItemResult(entry.Serial, entry.LotId, folder, photos.Count, status, folder, status == "就绪");
     }
 
