@@ -6,13 +6,16 @@ namespace TradeXmlStudio.Core;
 
 public sealed class TradeXmlGenerator
 {
-    public const string ContractNamespace = "http://www.w3.org/2000/09/xmldsig#";
+    // The accepted reference messages use unqualified element names. The old
+    // value was the XML Signature namespace, which does not belong on ELBP004/5.
+    public const string ContractNamespace = "";
 
     private static readonly XNamespace Ns = ContractNamespace;
     private static readonly UTF8Encoding Utf8WithoutBom = new(false);
     private static readonly string[] PhotoBizTypeCodes = ["A1", "A2", "A3", "A4"];
     private static int _clientSequenceCounter = Environment.TickCount & int.MaxValue;
     private static long _edocSequenceCounter = DateTime.UtcNow.Ticks & long.MaxValue;
+    private static long _fileTimestampTicks = DateTime.Now.Ticks;
 
     public IReadOnlyList<XmlGenerationResult> GenerateToFiles(
         XmlGenerationRequest request,
@@ -65,6 +68,91 @@ public sealed class TradeXmlGenerator
         return GeneratePackage(sources, request, options, overwrite);
     }
 
+    public BatchXmlGenerationResult GenerateBatchToFiles(
+        IReadOnlyList<BatchXmlGenerationItem> items,
+        string outputFolderPath,
+        string seqNo,
+        string proBatchNumber,
+        DateTimeOffset generatedAt,
+        TradeXmlOptions options,
+        bool overwrite)
+    {
+        var errors = ValidateBatchRequest(items, outputFolderPath, seqNo, proBatchNumber, options);
+        if (errors.Count > 0)
+        {
+            throw new XmlGenerationException(errors);
+        }
+
+        var batchEdocs = new List<BatchEdoc>(items.Count * PhotoBizTypeCodes.Length + 1);
+        foreach (var item in items)
+        {
+            var photos = item.PhotoPaths.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToList();
+            for (var index = 0; index < photos.Count; index++)
+            {
+                var path = Path.GetFullPath(photos[index]);
+                var source = new EdocSource(
+                    Path.GetFileName(path),
+                    path,
+                    PhotoBizTypeCodes[index],
+                    GetAttachmentType(path),
+                    false);
+                batchEdocs.Add(new BatchEdoc(item.LotId, source, CreateEdocId(source, generatedAt, options)));
+            }
+        }
+
+        if (options.IncludeP0)
+        {
+            var p0Path = Path.GetFullPath(options.P0FilePath);
+            var source = new EdocSource(Path.GetFileName(p0Path), p0Path, "P0", GetAttachmentType(p0Path), true);
+            batchEdocs.Add(new BatchEdoc("", source, CreateEdocId(source, generatedAt, options)));
+        }
+
+        var lists = items.Select(item => new BatchList(item.GNo.Trim(), item.LotId)).ToList();
+        var sharedPending = new List<(XDocument Document, string FileName)>();
+        var lotPending = items.ToDictionary(
+            item => item.LotId,
+            _ => new List<(XDocument Document, string FileName)>(),
+            StringComparer.Ordinal);
+
+        var elbp004ClientSeqNo = CreateClientSequenceNo(generatedAt);
+        sharedPending.Add((
+            BuildElbp004(lists, batchEdocs, seqNo, proBatchNumber, options, elbp004ClientSeqNo),
+            $"ELBP004_{elbp004ClientSeqNo}_{CreateFileTimestamp()}.xml"));
+
+        foreach (var edoc in batchEdocs)
+        {
+            var document = BuildElbp005(
+                edoc.Source,
+                edoc.EdocId,
+                options,
+                CreateClientSequenceNo(generatedAt));
+            if (edoc.Source.IsP0)
+            {
+                sharedPending.Add((document, $"0_P0_{CreateFileTimestamp()}.xml"));
+            }
+            else
+            {
+                lotPending[edoc.LotId].Add((
+                    document,
+                    $"{SanitizeFileName(edoc.LotId.Trim())}_{edoc.Source.BizTypeCode}_{CreateFileTimestamp()}.xml"));
+            }
+        }
+
+        var allPending = sharedPending.Concat(lotPending.Values.SelectMany(value => value)).ToList();
+        EnsureCanWrite(allPending, outputFolderPath, overwrite);
+
+        var sharedResults = sharedPending
+            .Select(item => WriteDocument(item.Document, outputFolderPath, item.FileName, overwrite))
+            .ToList();
+        var lotResults = lotPending.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<XmlGenerationResult>)pair.Value
+                .Select(item => WriteDocument(item.Document, outputFolderPath, item.FileName, overwrite))
+                .ToList(),
+            StringComparer.Ordinal);
+        return new BatchXmlGenerationResult(sharedResults, lotResults);
+    }
+
     public XmlGenerationResult GenerateP0ToFile(
         TradeXmlOptions options,
         string outputFolderPath,
@@ -90,8 +178,8 @@ public sealed class TradeXmlGenerator
 
         var source = new EdocSource(Path.GetFileName(fullPath), fullPath, "P0", GetAttachmentType(fullPath), true);
         var edocId = CreateEdocId(source, generatedAt, options);
-        var document = BuildElbp005(source, edocId, generatedAt, options);
-        return WriteDocument(document, outputFolderPath, "0_P0_ELBP005.xml", overwrite);
+        var document = BuildElbp005(source, edocId, options, CreateClientSequenceNo(generatedAt));
+        return WriteDocument(document, outputFolderPath, $"0_P0_{CreateFileTimestamp()}.xml", overwrite);
     }
 
     public static IReadOnlyList<EdocSource> ScanEdocs(string sourceFolder, string p0FilePath, bool includeP0)
@@ -151,32 +239,40 @@ public sealed class TradeXmlGenerator
         TradeXmlOptions options,
         bool overwrite)
     {
-        var ids = sources.Select(source => CreateEdocId(source, request.GeneratedAt, options)).ToList();
-        var prefix = SanitizeFileName(request.LotId.Trim());
+        var orderedSources = sources.OrderBy(source => source.IsP0).ToList();
+        var batchEdocs = orderedSources
+            .Select(source => new BatchEdoc(
+                source.IsP0 ? "" : request.LotId.Trim(),
+                source,
+                CreateEdocId(source, request.GeneratedAt, options)))
+            .ToList();
+        var clientSeqNo = CreateClientSequenceNo(request.GeneratedAt);
         var pending = new List<(XDocument Document, string FileName)>
         {
-            (BuildElbp004(sources, ids, request, options), $"{prefix}_ELBP004.xml")
+            (BuildElbp004(
+                [new BatchList(request.GNo.Trim(), request.LotId.Trim())],
+                batchEdocs,
+                request.SeqNo,
+                request.ProBatchNumber,
+                options,
+                clientSeqNo),
+                $"ELBP004_{clientSeqNo}_{CreateFileTimestamp()}.xml")
         };
 
-        for (var index = 0; index < sources.Count; index++)
+        foreach (var edoc in batchEdocs)
         {
-            var source = sources[index];
             pending.Add((
-                BuildElbp005(source, ids[index], request.GeneratedAt, options),
-                $"{prefix}_{source.BizTypeCode}_ELBP005.xml"));
+                BuildElbp005(
+                    edoc.Source,
+                    edoc.EdocId,
+                    options,
+                    CreateClientSequenceNo(request.GeneratedAt)),
+                edoc.Source.IsP0
+                    ? $"0_P0_{CreateFileTimestamp()}.xml"
+                    : $"{SanitizeFileName(request.LotId.Trim())}_{edoc.Source.BizTypeCode}_{CreateFileTimestamp()}.xml"));
         }
 
-        var outputPaths = pending
-            .Select(item => Path.Combine(request.OutputFolderPath, item.FileName))
-            .ToList();
-        if (!overwrite)
-        {
-            var existing = outputPaths.FirstOrDefault(File.Exists);
-            if (existing is not null)
-            {
-                throw new IOException($"输出文件已存在：{existing}");
-            }
-        }
+        EnsureCanWrite(pending, request.OutputFolderPath, overwrite);
 
         return pending
             .Select(item => WriteDocument(item.Document, request.OutputFolderPath, item.FileName, overwrite))
@@ -184,25 +280,27 @@ public sealed class TradeXmlGenerator
     }
 
     private static XDocument BuildElbp004(
-        IReadOnlyList<EdocSource> sources,
-        IReadOnlyList<string> edocIds,
-        XmlGenerationRequest request,
-        TradeXmlOptions options)
+        IReadOnlyList<BatchList> lists,
+        IReadOnlyList<BatchEdoc> batchEdocs,
+        string seqNo,
+        string proBatchNumber,
+        TradeXmlOptions options,
+        string clientSeqNo)
     {
-        var edocs = sources.Select((source, index) =>
+        var edocs = batchEdocs.Select(edoc =>
             new XElement(Ns + "Edoc",
-                new XElement(Ns + "LotId", source.IsP0 ? "" : request.LotId.Trim()),
-                new XElement(Ns + "EdocID", edocIds[index]),
-                new XElement(Ns + "BizTypeCode", source.BizTypeCode),
+                new XElement(Ns + "LotId", edoc.LotId),
+                new XElement(Ns + "EdocID", edoc.EdocId),
+                new XElement(Ns + "BizTypeCode", edoc.Source.BizTypeCode),
                 new XElement(Ns + "AttFmtTypeCode", "US"),
-                new XElement(Ns + "AttTypeCode", source.AttTypeCode),
-                new XElement(Ns + "AttEdocName", source.FileName)));
+                new XElement(Ns + "AttTypeCode", edoc.Source.AttTypeCode),
+                new XElement(Ns + "AttEdocName", edoc.Source.FileName)));
 
         var root = new XElement(Ns + "ELBP004Request",
-            BuildOperatorInfo("ELBP004", request.GeneratedAt, options, includeOperType: true),
+            BuildOperatorInfo("ELBP004", options, clientSeqNo, includeOperType: true),
             new XElement(Ns + "Head",
-                new XElement(Ns + "NnNo", request.SeqNo.Trim()),
-                new XElement(Ns + "ProBatchNumber", request.ProBatchNumber.Trim()),
+                new XElement(Ns + "NnNo", seqNo.Trim()),
+                new XElement(Ns + "ProBatchNumber", proBatchNumber.Trim()),
                 new XElement(Ns + "InputEtpsName", options.ExportEnterprise.Name.Trim()),
                 new XElement(Ns + "InputEtpsCode", options.ExportEnterprise.CustomsCode.Trim()),
                 new XElement(Ns + "InputEtpsScc", options.ExportEnterprise.SocialCreditCode.Trim()),
@@ -210,10 +308,10 @@ public sealed class TradeXmlGenerator
                 new XElement(Ns + "AgentCode", options.ApplicantEnterprise.CustomsCode.Trim()),
                 new XElement(Ns + "AgentScc", options.ApplicantEnterprise.SocialCreditCode.Trim()),
                 new XElement(Ns + "Note", "")),
-            new XElement(Ns + "Lists",
+            new XElement(Ns + "Lists", lists.Select(list =>
                 new XElement(Ns + "List",
-                    new XElement(Ns + "GNo", request.GNo.Trim()),
-                    new XElement(Ns + "LotId", request.LotId.Trim()))),
+                    new XElement(Ns + "GNo", list.GNo),
+                    new XElement(Ns + "LotId", list.LotId)))),
             new XElement(Ns + "Edocs", edocs));
         return new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
     }
@@ -221,11 +319,11 @@ public sealed class TradeXmlGenerator
     private static XDocument BuildElbp005(
         EdocSource source,
         string edocId,
-        DateTimeOffset generatedAt,
-        TradeXmlOptions options)
+        TradeXmlOptions options,
+        string clientSeqNo)
     {
         var root = new XElement(Ns + "ELBP005Request",
-            BuildOperatorInfo("ELBP005", generatedAt, options, includeOperType: false),
+            BuildOperatorInfo("ELBP005", options, clientSeqNo, includeOperType: false),
             new XElement(Ns + "Edoc",
                 new XElement(Ns + "EdocID", edocId),
                 new XElement(Ns + "BizTypeCode", source.BizTypeCode),
@@ -239,8 +337,8 @@ public sealed class TradeXmlGenerator
 
     private static XElement BuildOperatorInfo(
         string messageType,
-        DateTimeOffset generatedAt,
         TradeXmlOptions options,
+        string clientSeqNo,
         bool includeOperType)
     {
         var operInfo = new XElement(Ns + "OperInfo");
@@ -253,11 +351,9 @@ public sealed class TradeXmlGenerator
             new XElement(Ns + "MessageType", messageType),
             new XElement(Ns + "Version", "1.0"),
             new XElement(Ns + "ICCode", options.Operator.ICCode.Trim()),
-            string.IsNullOrWhiteSpace(options.Operator.CopCode)
-                ? null
-                : new XElement(Ns + "CopCode", options.Operator.CopCode.Trim()),
+            new XElement(Ns + "CopCode", includeOperType ? options.Operator.CopCode.Trim() : ""),
             new XElement(Ns + "OperName", options.Operator.OperName.Trim()),
-            new XElement(Ns + "ClientSeqNo", CreateClientSequenceNo(generatedAt)),
+            new XElement(Ns + "ClientSeqNo", clientSeqNo),
             // 单一窗口导入客户端会在发送前填写签名及签名时间。
             new XElement(Ns + "Sign", ""),
             new XElement(Ns + "SignDate", ""),
@@ -274,13 +370,46 @@ public sealed class TradeXmlGenerator
         DateTimeOffset generatedAt,
         TradeXmlOptions options)
     {
-        var serial = (Interlocked.Increment(ref _edocSequenceCounter) & long.MaxValue)
-            .ToString("D23", CultureInfo.InvariantCulture);
-        return options.ExportEnterprise.SocialCreditCode.Trim()
-            + options.SupervisingCustomsCode.Trim()
+        var serial = ((Interlocked.Increment(ref _edocSequenceCounter) & long.MaxValue) % 100_000_000_000_000L)
+            .ToString("D14", CultureInfo.InvariantCulture);
+        return generatedAt.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
             + source.BizTypeCode.Trim()
-            + generatedAt.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture)
+            + options.SupervisingCustomsCode.Trim()
             + serial;
+    }
+
+    private static string CreateFileTimestamp()
+    {
+        while (true)
+        {
+            var previous = Interlocked.Read(ref _fileTimestampTicks);
+            var now = DateTime.Now.Ticks;
+            var next = Math.Max(now, previous + 1);
+            if (Interlocked.CompareExchange(ref _fileTimestampTicks, next, previous) == previous)
+            {
+                return new DateTime(next, DateTimeKind.Local)
+                    .ToString("yyyyMMddHHmmssfffffff", CultureInfo.InvariantCulture);
+            }
+        }
+    }
+
+    private static void EnsureCanWrite(
+        IReadOnlyList<(XDocument Document, string FileName)> pending,
+        string outputFolderPath,
+        bool overwrite)
+    {
+        if (overwrite)
+        {
+            return;
+        }
+
+        var existing = pending
+            .Select(item => Path.Combine(outputFolderPath, item.FileName))
+            .FirstOrDefault(File.Exists);
+        if (existing is not null)
+        {
+            throw new IOException($"输出文件已存在：{existing}");
+        }
     }
 
     private static XmlGenerationResult WriteDocument(
@@ -378,6 +507,58 @@ public sealed class TradeXmlGenerator
         return errors;
     }
 
+    private static List<string> ValidateBatchRequest(
+        IReadOnlyList<BatchXmlGenerationItem> items,
+        string outputFolderPath,
+        string seqNo,
+        string proBatchNumber,
+        TradeXmlOptions options)
+    {
+        var errors = new List<string>();
+        ValidateOutputFolder(outputFolderPath, errors);
+        ValidateRequiredLength(seqNo, "通知编号", 50, errors);
+        ValidateRequiredLength(proBatchNumber, "生产批次号", 50, errors);
+        ValidateOperatorAndEnterprises(options, errors);
+
+        if (items.Count == 0)
+        {
+            errors.Add("没有可生成的箱号。");
+        }
+
+        foreach (var duplicate in items.GroupBy(item => item.LotId.Trim(), StringComparer.Ordinal).Where(group => group.Count() > 1))
+        {
+            errors.Add($"箱号重复：{duplicate.Key}");
+        }
+
+        if (options.IncludeP0)
+        {
+            ValidateP0(options, errors);
+        }
+
+        foreach (var item in items)
+        {
+            ValidateRequiredLength(item.GNo, $"箱号 {item.LotId} 的商品项号", 18, errors);
+            if (!string.IsNullOrWhiteSpace(item.GNo) && !item.GNo.Trim().All(char.IsDigit))
+            {
+                errors.Add($"箱号 {item.LotId} 的商品项号必须为数字。");
+            }
+            ValidateRequiredLength(item.LotId, "箱号", 255, errors);
+            ValidatePhotoCount(item.PhotoPaths.Count, errors);
+            foreach (var photo in item.PhotoPaths.Where(photo => !File.Exists(photo)))
+            {
+                errors.Add($"照片不存在：{photo}");
+            }
+        }
+
+        var attachments = items.SelectMany(item => item.PhotoPaths).Where(File.Exists).ToList();
+        if (options.IncludeP0 && File.Exists(options.P0FilePath))
+        {
+            attachments.Add(options.P0FilePath);
+        }
+        ValidateAttachmentSizes(attachments, options, errors);
+        return errors;
+    }
+
     private static void ValidatePhotoCount(int count, List<string> errors)
     {
         if (count == 0)
@@ -395,7 +576,7 @@ public sealed class TradeXmlGenerator
         TradeXmlOptions options,
         List<string> errors)
     {
-        ValidateRequiredLength(request.SeqNo, "通知编号", 18, errors);
+        ValidateRequiredLength(request.SeqNo, "通知编号", 50, errors);
         ValidateRequiredLength(request.ProBatchNumber, "生产批次号", 50, errors);
         ValidateRequiredLength(request.GNo, "商品项号", 18, errors);
         if (!string.IsNullOrWhiteSpace(request.GNo) && !request.GNo.Trim().All(char.IsDigit))
@@ -540,4 +721,8 @@ public sealed class TradeXmlGenerator
         .ToString($"D{digits}", CultureInfo.InvariantCulture);
 
     private static double ToMegabytes(long bytes) => bytes / 1024d / 1024d;
+
+    private sealed record BatchList(string GNo, string LotId);
+
+    private sealed record BatchEdoc(string LotId, EdocSource Source, string EdocId);
 }

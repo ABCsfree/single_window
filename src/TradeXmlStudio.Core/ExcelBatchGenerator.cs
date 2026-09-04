@@ -33,29 +33,115 @@ public sealed class ExcelBatchGenerator(
         TradeXmlOptions options,
         bool overwrite)
     {
-        var results = new List<ExcelBatchItemResult>(entries.Count);
-
+        var results = new ExcelBatchItemResult?[entries.Count];
+        var prepared = new List<(int Index, ExcelBatchEntry Entry, string PhotoFolder, IReadOnlyList<string> Photos)>();
         var processedLotIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var entry in entries)
+        for (var index = 0; index < entries.Count; index++)
         {
-            if (!processedLotIds.Add(entry.LotId))
+            var entry = entries[index];
+            var photoFolder = ResolvePhotoFolder(bigFolderPath, entry, mode);
+            if (!processedLotIds.Add(entry.LotId.Trim()))
             {
-                results.Add(new ExcelBatchItemResult(
+                results[index] = new ExcelBatchItemResult(
                     entry.Serial,
                     entry.LotId,
-                    ResolvePhotoFolder(bigFolderPath, entry, mode),
+                    photoFolder,
                     0,
                     "失败",
                     "箱号重复，已跳过。",
-                    false));
+                    false);
                 continue;
             }
 
-            results.Add(GenerateEntry(
-                entry, bigFolderPath, outputFolderPath, mode, seqNo, proBatchNumber, generatedAt, options, overwrite));
+            var photos = GetPhotoPaths(bigFolderPath, entry, mode);
+            if (IsSmallFolderMode(mode) && !Directory.Exists(photoFolder))
+            {
+                results[index] = new ExcelBatchItemResult(
+                    entry.Serial, entry.LotId, photoFolder, 0, "失败", "小文件夹不存在。", false);
+                continue;
+            }
+            if (photos.Count != 4)
+            {
+                results[index] = new ExcelBatchItemResult(
+                    entry.Serial,
+                    entry.LotId,
+                    photoFolder,
+                    photos.Count,
+                    "失败",
+                    $"照片数量必须为 4 张（A1-A4），当前 {photos.Count} 张。",
+                    false);
+                continue;
+            }
+
+            var oversized = options.MaxImageBytes > 0
+                ? photos.FirstOrDefault(path => new FileInfo(path).Length > options.MaxImageBytes)
+                : null;
+            if (oversized is not null)
+            {
+                results[index] = new ExcelBatchItemResult(
+                    entry.Serial,
+                    entry.LotId,
+                    photoFolder,
+                    photos.Count,
+                    "失败",
+                    $"附件超过大小限制：{Path.GetFileName(oversized)}。",
+                    false);
+                continue;
+            }
+
+            prepared.Add((index, entry, photoFolder, photos));
         }
 
-        return results;
+        if (prepared.Count > 0)
+        {
+            try
+            {
+                var batchItems = prepared.Select(item => new BatchXmlGenerationItem(
+                    item.Entry.Serial.ToString(CultureInfo.InvariantCulture),
+                    item.Entry.LotId,
+                    item.PhotoFolder,
+                    item.Photos)).ToList();
+                var generated = _xmlGenerator.GenerateBatchToFiles(
+                    batchItems,
+                    outputFolderPath,
+                    seqNo,
+                    proBatchNumber,
+                    generatedAt,
+                    options,
+                    overwrite);
+
+                foreach (var item in prepared)
+                {
+                    var lotFiles = generated.LotResults[item.Entry.LotId];
+                    var detail = $"4 个 ELBP005：{string.Join(", ", lotFiles.Select(file => Path.GetFileName(file.OutputPath)))}";
+                    results[item.Index] = new ExcelBatchItemResult(
+                        item.Entry.Serial,
+                        item.Entry.LotId,
+                        item.PhotoFolder,
+                        item.Photos.Count,
+                        "成功",
+                        detail,
+                        true);
+                }
+            }
+            catch (Exception ex)
+            {
+                var detail = ex.Message.Replace(Environment.NewLine, "；");
+                foreach (var item in prepared)
+                {
+                    results[item.Index] = new ExcelBatchItemResult(
+                        item.Entry.Serial,
+                        item.Entry.LotId,
+                        item.PhotoFolder,
+                        item.Photos.Count,
+                        "失败",
+                        detail,
+                        false);
+                }
+            }
+        }
+
+        return results.Select(result => result!).ToList();
     }
 
     public static IReadOnlyList<string> GetPhotoPaths(
@@ -85,48 +171,10 @@ public sealed class ExcelBatchGenerator(
 
         var dash = fileNameWithoutExtension.IndexOf('-');
         var numericPrefix = dash < 0 ? fileNameWithoutExtension : fileNameWithoutExtension[..dash];
-        var numericSuffix = TrailingDigits(lotId);
+        var numericSuffix = TrailingDigits(lotId.Trim());
         return long.TryParse(numericPrefix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var prefix)
             && long.TryParse(numericSuffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var suffix)
             && prefix == suffix;
-    }
-
-    private ExcelBatchItemResult GenerateEntry(
-        ExcelBatchEntry entry,
-        string bigFolderPath,
-        string outputFolderPath,
-        BatchFolderMode mode,
-        string seqNo,
-        string proBatchNumber,
-        DateTimeOffset generatedAt,
-        TradeXmlOptions options,
-        bool overwrite)
-    {
-        var photoFolder = ResolvePhotoFolder(bigFolderPath, entry, mode);
-        var photos = GetPhotoPaths(bigFolderPath, entry, mode);
-        if (IsSmallFolderMode(mode) && !Directory.Exists(photoFolder))
-        {
-            return new ExcelBatchItemResult(entry.Serial, entry.LotId, photoFolder, 0, "失败", "小文件夹不存在。", false);
-        }
-
-        try
-        {
-            var request = new XmlGenerationRequest(
-                photoFolder,
-                outputFolderPath,
-                seqNo,
-                proBatchNumber,
-                entry.Serial.ToString(CultureInfo.InvariantCulture),
-                entry.LotId,
-                generatedAt);
-            var generated = _xmlGenerator.GenerateToFilesFromPhotos(photos, request, options, overwrite);
-            var detail = $"{generated.Count} 个文件：{string.Join(", ", generated.Select(item => Path.GetFileName(item.OutputPath)))}";
-            return new ExcelBatchItemResult(entry.Serial, entry.LotId, photoFolder, photos.Count, "成功", detail, true);
-        }
-        catch (Exception ex)
-        {
-            return new ExcelBatchItemResult(entry.Serial, entry.LotId, photoFolder, photos.Count, "失败", ex.Message.Replace(Environment.NewLine, "；"), false);
-        }
     }
 
     private static ExcelBatchItemResult PreviewOne(ExcelBatchEntry entry, string bigFolderPath, BatchFolderMode mode)
@@ -146,7 +194,7 @@ public sealed class ExcelBatchGenerator(
     private static string ResolvePhotoFolder(string bigFolder, ExcelBatchEntry entry, BatchFolderMode mode) =>
         mode switch
         {
-            BatchFolderMode.SmallFolders => Path.Combine(bigFolder, entry.LotId),
+            BatchFolderMode.SmallFolders => Path.Combine(bigFolder, entry.LotId.Trim()),
             BatchFolderMode.SerialSmallFolders => Path.Combine(
                 bigFolder,
                 entry.Serial.ToString(CultureInfo.InvariantCulture)),

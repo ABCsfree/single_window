@@ -52,7 +52,7 @@
                         <Button Grid.Row="1" Grid.Column="2" Content="浏览…" Click="BrowseOutputFolder_Click" />
 
                         <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="通知编号" />
-                        <TextBox x:Name="SeqNoTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="18" />
+                        <TextBox x:Name="SeqNoTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
 
                         <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="生产批次号" />
                         <TextBox x:Name="ProBatchNumberTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
@@ -119,7 +119,7 @@
                                   SelectionChanged="BatchSheet_Changed" />
 
                         <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="通知编号" />
-                        <TextBox x:Name="BatchSeqNoTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="18" />
+                        <TextBox x:Name="BatchSeqNoTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
 
                         <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="生产批次号" />
                         <TextBox x:Name="BatchProBatchNumberTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />

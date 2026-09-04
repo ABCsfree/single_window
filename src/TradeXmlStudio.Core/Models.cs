@@ -43,6 +43,16 @@ public sealed record XmlGenerationRequest(
 
 public sealed record XmlGenerationResult(string OutputPath, XDocument Document);
 
+public sealed record BatchXmlGenerationItem(
+    string GNo,
+    string LotId,
+    string PhotoFolderPath,
+    IReadOnlyList<string> PhotoPaths);
+
+public sealed record BatchXmlGenerationResult(
+    IReadOnlyList<XmlGenerationResult> SharedResults,
+    IReadOnlyDictionary<string, IReadOnlyList<XmlGenerationResult>> LotResults);
+
 public sealed record EdocSource(
     string FileName,
     string FullPath,

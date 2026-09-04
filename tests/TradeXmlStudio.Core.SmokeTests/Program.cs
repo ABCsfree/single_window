@@ -13,6 +13,7 @@ try
     TestSerialFolderMode(testRoot);
     TestConfigurationRoundTrip(testRoot);
     TestXmlGeneration(testRoot);
+    TestBatchXmlGeneration(testRoot);
     Console.WriteLine("All smoke tests passed.");
     return 0;
 }
@@ -28,6 +29,7 @@ static void TestLotIdMatching()
 {
     Assert(ExcelBatchGenerator.MatchesLotId("123-A1", "BOX00123"), "numeric prefix should match lot-id suffix");
     Assert(ExcelBatchGenerator.MatchesLotId("00123-A4", "箱号123"), "leading zeroes should not affect matching");
+    Assert(ExcelBatchGenerator.MatchesLotId("123-A1", "  BOX00123  "), "lot-id matching should ignore surrounding spaces");
     Assert(!ExcelBatchGenerator.MatchesLotId("photo-A1", "BOX00123"), "non-numeric prefix must not match");
     Assert(!ExcelBatchGenerator.MatchesLotId("124-A1", "BOX00123"), "different numbers must not match");
 }
@@ -42,8 +44,8 @@ static void TestWorkbookReading(string root)
 
     var entries = reader.ReadEntries(workbookPath, "批次一");
     Assert(entries.Count == 2, "header and blank lot IDs should be skipped");
-    Assert(entries[0] == new ExcelBatchEntry(1, "BOX00123"), "B/C values should map to serial and lot ID");
-    Assert(entries[1] == new ExcelBatchEntry(7, "BOX00124"), "row number should be fallback serial");
+    Assert(entries[0] == new ExcelBatchEntry(1, "  BOX00123  "), "lot ID should preserve surrounding spaces from Excel");
+    Assert(entries[1] == new ExcelBatchEntry(42, "BOX00124"), "the second GNo should come directly from column B");
 }
 
 static void TestSerialFolderMode(string root)
@@ -135,7 +137,7 @@ static void TestXmlGeneration(string root)
     var request = new XmlGenerationRequest(
         photoFolder,
         outputFolder,
-        "NN20260804000001",
+        "20260813164003000645181692",
         "PB202608040001",
         "7",
         "BOX00123",
@@ -143,11 +145,13 @@ static void TestXmlGeneration(string root)
     var results = new TradeXmlGenerator().GenerateToFiles(request, options, false);
 
     Assert(results.Count == 6, "one ELBP004 and five ELBP005 files should be generated");
-    Assert(Path.GetFileName(results[0].OutputPath) == "BOX00123_ELBP004.xml", "the first XML should be the ELBP004 request");
+    Assert(Path.GetFileName(results[0].OutputPath).StartsWith("ELBP004_", StringComparison.Ordinal),
+        "the first XML should use the reference ELBP004 filename pattern");
 
     XNamespace ns = TradeXmlGenerator.ContractNamespace;
     var main = XDocument.Load(results[0].OutputPath);
-    Assert(main.Root?.Name == ns + "ELBP004Request", "main root should use the qualified ELBP004 contract");
+    Assert(main.Root?.Name == ns + "ELBP004Request" && main.Root.Name.NamespaceName == "",
+        "main root should use the unqualified ELBP004 contract from the reference message");
     Assert(main.Root?.Element(ns + "Head")?.Element(ns + "ProBatchNumber")?.Value == "PB202608040001",
         "ELBP004 should contain the production batch number");
     Assert(main.Root?.Element(ns + "Head")?.Element(ns + "InputEtpsScc")?.Value == "91350781MA2YGJK59J",
@@ -156,19 +160,21 @@ static void TestXmlGeneration(string root)
         "ELBP004 should contain the independently configured applicant");
     Assert(main.Root?.Element(ns + "Lists")?.Element(ns + "List")?.Element(ns + "LotId")?.Value == "BOX00123",
         "ELBP004 should contain the lot list");
+    Assert(main.Root?.Element(ns + "Lists")?.Element(ns + "List")?.Element(ns + "GNo")?.Value == "7",
+        "single-entry ELBP004 should use the entered GNo");
 
     var metadata = main.Root?.Element(ns + "Edocs")?.Elements(ns + "Edoc").ToList() ?? [];
     Assert(metadata.Count == 5, "ELBP004 should reference P0 and A1-A4 metadata");
-    Assert(metadata.Select(edoc => edoc.Element(ns + "BizTypeCode")?.Value).SequenceEqual(["P0", "A1", "A2", "A3", "A4"]),
-        "ELBP004 attachment order should be P0 followed by A1-A4");
-    Assert(metadata.All(edoc => edoc.Element(ns + "EdocID")?.Value.Length == 64),
-        "every EdocID should use the updated 64-character rule");
-    Assert(metadata[0].Element(ns + "LotId")?.Value == "" && metadata.Skip(1).All(edoc => edoc.Element(ns + "LotId")?.Value == "BOX00123"),
+    Assert(metadata.Select(edoc => edoc.Element(ns + "BizTypeCode")?.Value).SequenceEqual(["A1", "A2", "A3", "A4", "P0"]),
+        "ELBP004 attachment order should be A1-A4 followed by the shared P0");
+    Assert(metadata.All(edoc => edoc.Element(ns + "EdocID")?.Value.Length == 28),
+        "every EdocID should follow the 28-character reference rule");
+    Assert(metadata[^1].Element(ns + "LotId")?.Value == "" && metadata.Take(4).All(edoc => edoc.Element(ns + "LotId")?.Value == "BOX00123"),
         "P0 should be batch-level while photos should reference the lot ID");
 
     var attachmentDocuments = results.Skip(1).Select(result => XDocument.Load(result.OutputPath)).ToList();
     Assert(attachmentDocuments.All(document => document.Root?.Name == ns + "ELBP005Request"),
-        "attachment roots should use the qualified ELBP005 contract");
+        "attachment roots should use the unqualified ELBP005 reference contract");
     Assert(attachmentDocuments.All(document => document.Root?.Elements(ns + "Edoc").Count() == 1),
         "each ELBP005 should contain exactly one Edoc");
     Assert(attachmentDocuments.Select(document => document.Root!.Element(ns + "Edoc")!.Element(ns + "EdocID")!.Value)
@@ -180,6 +186,116 @@ static void TestXmlGeneration(string root)
         "ELBP005 should not contain the removed SeqNo field");
     Assert(main.Root?.Element(ns + "OperInfo")?.Element(ns + "Sign")?.Value == "",
         "signature should remain empty for the import client");
+    Assert(attachmentDocuments.All(document => document.Root?.Element(ns + "OperInfo")?.Element(ns + "CopCode")?.Value == ""),
+        "ELBP005 should retain an empty CopCode element like the reference message");
+}
+
+static void TestBatchXmlGeneration(string root)
+{
+    var batchRoot = Path.Combine(root, "batch-xml-photos");
+    var outputFolder = Path.Combine(root, "batch-xml-output");
+    Directory.CreateDirectory(batchRoot);
+    Directory.CreateDirectory(outputFolder);
+
+    var entries = new[]
+    {
+        new ExcelBatchEntry(501, "NPS-R288 260803N100US0019"),
+        new ExcelBatchEntry(702, "  NPS-R288 260803N100US0020  ")
+    };
+    foreach (var entry in entries)
+    {
+        var folder = Path.Combine(batchRoot, entry.LotId.Trim());
+        Directory.CreateDirectory(folder);
+        for (var index = 1; index <= 4; index++)
+        {
+            File.WriteAllBytes(Path.Combine(folder, $"{entry.Serial}-{index}.jpg"), [(byte)entry.Serial, (byte)index]);
+        }
+    }
+
+    var p0Path = Path.Combine(root, "batch-p0.pdf");
+    File.WriteAllBytes(p0Path, [(byte)'p', (byte)'0']);
+    var options = new TradeXmlOptions
+    {
+        Operator = new OperatorOptions
+        {
+            ICCode = "2026332131",
+            CopCode = "91440300MA5EF74B5W",
+            OperName = "Tester"
+        },
+        ExportEnterprise = new EnterpriseOptions
+        {
+            Name = "深圳市省油灯网络科技有限公司",
+            CustomsCode = "4403961H56",
+            SocialCreditCode = "914403003427277794"
+        },
+        ApplicantEnterprise = new EnterpriseOptions
+        {
+            Name = "深圳市森灏物流有限公司",
+            CustomsCode = "44039809NU",
+            SocialCreditCode = "91440300MA5EF74B5W"
+        },
+        SupervisingCustomsCode = "2301",
+        MaxImageBytes = 1024,
+        UploadTypeCode = "F",
+        IncludeP0 = true,
+        P0FilePath = p0Path
+    };
+
+    var results = new ExcelBatchGenerator().RunBatch(
+        entries,
+        batchRoot,
+        outputFolder,
+        BatchFolderMode.SmallFolders,
+        "20260813164003000645181692",
+        "L20260813163543000645178869",
+        DateTimeOffset.Parse("2026-08-14T01:37:30-07:00"),
+        options,
+        false);
+
+    Assert(results.Count == 2 && results.All(result => result.Success), "both batch rows should generate successfully");
+    Assert(results.All(result => result.Detail.StartsWith("4 个 ELBP005", StringComparison.Ordinal)),
+        "each lot should report exactly four A1-A4 ELBP005 files");
+
+    var files = Directory.GetFiles(outputFolder, "*.xml");
+    Assert(files.Length == 10, "two lots should create one ELBP004, one P0 and eight A1-A4 ELBP005 files");
+    Assert(files.Count(path => Path.GetFileName(path).StartsWith("ELBP004_", StringComparison.Ordinal)) == 1,
+        "a batch should create exactly one ELBP004");
+    Assert(files.Count(path => Path.GetFileName(path).StartsWith("0_P0_", StringComparison.Ordinal)) == 1,
+        "a batch should create exactly one shared P0 ELBP005");
+    foreach (var entry in entries)
+    {
+        Assert(files.Count(path => Path.GetFileName(path).StartsWith($"{entry.LotId.Trim()}_A", StringComparison.Ordinal)) == 4,
+            $"lot {entry.LotId} should create A1-A4");
+    }
+
+    var mainPath = files.Single(path => Path.GetFileName(path).StartsWith("ELBP004_", StringComparison.Ordinal));
+    var main = XDocument.Load(mainPath);
+    XNamespace ns = TradeXmlGenerator.ContractNamespace;
+    var lists = main.Root?.Element(ns + "Lists")?.Elements(ns + "List").ToList() ?? [];
+    var metadata = main.Root?.Element(ns + "Edocs")?.Elements(ns + "Edoc").ToList() ?? [];
+    Assert(lists.Count == 2, "the shared ELBP004 should contain both lot list rows");
+    Assert(lists.Select(list => list.Element(ns + "GNo")?.Value).SequenceEqual(["501", "702"]),
+        "batch GNo values should come directly from Excel column B");
+    Assert(lists.Select(list => list.Element(ns + "LotId")?.Value).SequenceEqual(entries.Select(entry => entry.LotId)),
+        "batch ELBP004 lot IDs should preserve surrounding spaces from Excel");
+    Assert(metadata.Where(edoc => edoc.Element(ns + "BizTypeCode")?.Value != "P0")
+            .Select(edoc => edoc.Element(ns + "LotId")?.Value)
+            .Distinct()
+            .SequenceEqual(entries.Select(entry => entry.LotId)),
+        "batch attachment metadata should preserve surrounding lot-id spaces");
+    Assert(metadata.Count == 9, "the shared ELBP004 should contain eight photo entries and one P0 entry");
+    Assert(metadata.Count(edoc => edoc.Element(ns + "BizTypeCode")?.Value == "P0") == 1,
+        "the shared ELBP004 should reference P0 once");
+    Assert(metadata[^1].Element(ns + "BizTypeCode")?.Value == "P0" && metadata[^1].Element(ns + "LotId")?.Value == "",
+        "the shared P0 metadata should be last and have an empty lot ID");
+
+    var metadataIds = metadata.Select(edoc => edoc.Element(ns + "EdocID")!.Value).Order().ToList();
+    var attachmentIds = files
+        .Where(path => path != mainPath)
+        .Select(path => XDocument.Load(path).Root!.Element(ns + "Edoc")!.Element(ns + "EdocID")!.Value)
+        .Order()
+        .ToList();
+    Assert(metadataIds.SequenceEqual(attachmentIds), "ELBP004 metadata IDs should match all batch ELBP005 IDs");
 }
 
 static void CreateWorkbook(string path)
@@ -201,7 +317,7 @@ static void CreateWorkbook(string path)
     AddXml(archive, "xl/sharedStrings.xml", """
         <?xml version="1.0" encoding="UTF-8"?>
         <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="4" uniqueCount="4">
-          <si><t>序号</t></si><si><t>箱号</t></si><si><t>BOX00123</t></si><si><t>BOX00124</t></si>
+          <si><t>序号</t></si><si><t>箱号</t></si><si><t xml:space="preserve">  BOX00123  </t></si><si><t>BOX00124</t></si>
         </sst>
         """);
     AddXml(archive, "xl/worksheets/sheet1.xml", """
@@ -210,7 +326,7 @@ static void CreateWorkbook(string path)
           <row r="1"><c r="B1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row>
           <row r="2"><c r="B2"><v>1</v></c><c r="C2" t="s"><v>2</v></c></row>
           <row r="3"><c r="B3"><v>2</v></c><c r="C3" t="inlineStr"><is><t></t></is></c></row>
-          <row r="7"><c r="B7" t="inlineStr"><is><t>不是数字</t></is></c><c r="C7" t="s"><v>3</v></c></row>
+          <row r="7"><c r="B7"><v>42</v></c><c r="C7" t="s"><v>3</v></c></row>
         </sheetData></worksheet>
         """);
 }

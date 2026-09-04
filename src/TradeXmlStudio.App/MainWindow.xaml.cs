@@ -277,7 +277,7 @@ public partial class MainWindow : Window
         }
 
         if (MessageBox.Show(this,
-                $"将处理 {_batchEntries.Count} 行并覆盖同名 XML，是否继续？",
+                $"将处理 {_batchEntries.Count} 行；整批生成 1 份 ELBP004、最多 1 份 P0，每个有效箱号生成 A1-A4 共 4 份 ELBP005。是否继续？",
                 "确认批量生成",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -303,8 +303,8 @@ public partial class MainWindow : Window
             SetStatus($"批量完成：成功 {successCount}，失败 {failureCount}。输出目录：{outputFolder}");
             MessageBox.Show(this,
                 failureCount == 0
-                    ? $"全部成功：生成 {successCount} 项。"
-                    : $"成功 {successCount} 项，失败 {failureCount} 项；详情请查看列表。",
+                    ? $"全部成功：生成 {successCount} 个箱号；ELBP004 与 P0 均为整批共享。"
+                    : $"成功 {successCount} 个箱号，失败 {failureCount} 个箱号；详情请查看列表。",
                 failureCount == 0 ? "批量完成" : "批量完成（含失败）",
                 MessageBoxButton.OK,
                 failureCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
