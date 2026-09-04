@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+trade-xml-config.json
+.trade-xml-tmp/
+.dotnet/
+.dotnet-cli-home/
+dotnet-sdk-*.zip
+publish-temp/
+/dist/
