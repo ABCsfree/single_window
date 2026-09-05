@@ -27,6 +27,7 @@ public sealed record TradeXmlOptions
     public EnterpriseOptions ApplicantEnterprise { get; set; } = new();
     public string SupervisingCustomsCode { get; set; } = "";
     public long MaxImageBytes { get; set; } = DefaultMaxImageBytes;
+    public string InformationEntryOperType { get; set; } = "C";
     public string UploadTypeCode { get; set; } = "F";
     public string P0FilePath { get; set; } = "";
     public bool IncludeP0 { get; set; }

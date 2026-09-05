@@ -94,7 +94,8 @@ public partial class MainWindow : Window
                 LotIdTextBox.Text,
                 DateTimeOffset.Now);
             var overwrite = ConfirmSingleOverwrite(request);
-            var results = _xmlGenerator.GenerateToFiles(request, BuildOptions(), overwrite);
+            var options = BuildOptions();
+            var results = _xmlGenerator.GenerateToFiles(request, options, overwrite);
             _lastOutputFolder = results.Count > 0
                 ? Path.GetDirectoryName(results[0].OutputPath)
                 : request.OutputFolderPath;
@@ -102,8 +103,10 @@ public partial class MainWindow : Window
             RefreshPhotoPreview();
 
             var names = string.Join(Environment.NewLine, results.Select(result => Path.GetFileName(result.OutputPath)));
-            SetStatus($"生成成功：{results.Count} 个 XML。");
-            MessageBox.Show(this, $"已生成 {results.Count} 个 XML：{Environment.NewLine}{names}",
+            var operationText = FormatInformationEntryOperation(options.InformationEntryOperType);
+            SetStatus($"生成成功：{results.Count} 个 XML；信息补录方式：{operationText}。");
+            MessageBox.Show(this,
+                $"信息补录方式：{operationText}{Environment.NewLine}已生成 {results.Count} 个 XML：{Environment.NewLine}{names}",
                 "生成成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (OperationCanceledException)
@@ -286,8 +289,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        var options = BuildOptions();
+        var operationText = FormatInformationEntryOperation(options.InformationEntryOperType);
         if (MessageBox.Show(this,
-                $"将处理 {_batchEntries.Count} 行；整批生成 1 份 ELBP004、最多 1 份 P0，"
+                $"信息补录方式：{operationText}。将处理 {_batchEntries.Count} 行；整批生成 1 份 ELBP004、最多 1 份 P0，"
                 + $"每个有效箱号生成 {photoBizTypeText} 共 {expectedPhotoCount} 份 ELBP005。是否继续？",
                 "确认批量生成",
                 MessageBoxButton.YesNo,
@@ -302,7 +307,6 @@ public partial class MainWindow : Window
         {
             var entries = _batchEntries.ToList();
             var mode = GetBatchFolderMode();
-            var options = BuildOptions();
             var generatedAt = DateTimeOffset.Now;
             var results = await Task.Run(() => _batchGenerator.RunBatch(
                 entries,
@@ -320,11 +324,11 @@ public partial class MainWindow : Window
             var successCount = results.Count(result => result.Success);
             var failureCount = results.Count - successCount;
             OpenBatchFolderButton.IsEnabled = Directory.Exists(outputFolder);
-            SetStatus($"批量完成：成功 {successCount}，失败 {failureCount}。输出目录：{outputFolder}");
+            SetStatus($"批量完成：成功 {successCount}，失败 {failureCount}；信息补录方式：{operationText}。输出目录：{outputFolder}");
             MessageBox.Show(this,
                 failureCount == 0
-                    ? $"全部成功：生成 {successCount} 个箱号；ELBP004 与 P0 均为整批共享。"
-                    : $"成功 {successCount} 个箱号，失败 {failureCount} 个箱号；详情请查看列表。",
+                    ? $"全部成功：生成 {successCount} 个箱号；信息补录方式为 {operationText}；ELBP004 与 P0 均为整批共享。"
+                    : $"成功 {successCount} 个箱号，失败 {failureCount} 个箱号；信息补录方式为 {operationText}；详情请查看列表。",
                 failureCount == 0 ? "批量完成" : "批量完成（含失败）",
                 MessageBoxButton.OK,
                 failureCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
@@ -432,6 +436,7 @@ public partial class MainWindow : Window
             SocialCreditCode = AgentSccTextBox.Text.Trim()
         },
         SupervisingCustomsCode = SupervisingCustomsCodeTextBox.Text.Trim(),
+        InformationEntryOperType = GetComboBoxValue(InformationEntryOperTypeComboBox, "C"),
         UploadTypeCode = GetComboBoxValue(UploadTypeCodeComboBox, "F"),
         MaxImageBytes = ParseMaxImageBytes(),
         IncludeP0 = P0IncludeCheckBox.IsChecked == true,
@@ -468,6 +473,7 @@ public partial class MainWindow : Window
         MaxImageMbTextBox.Text = (options.MaxImageBytes / 1024d / 1024d).ToString("0.##", CultureInfo.CurrentCulture);
         P0IncludeCheckBox.IsChecked = options.IncludeP0;
         P0FilePathTextBox.Text = options.P0FilePath;
+        SelectComboBoxValue(InformationEntryOperTypeComboBox, options.InformationEntryOperType, "C");
         SelectComboBoxValue(UploadTypeCodeComboBox, options.UploadTypeCode, "F");
     }
 
@@ -564,16 +570,22 @@ public partial class MainWindow : Window
     }
 
     private static string GetComboBoxValue(ComboBox comboBox, string fallback) =>
-        (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? fallback;
+        comboBox.SelectedItem is ComboBoxItem item ? GetComboBoxItemValue(item) : fallback;
 
     private static void SelectComboBoxValue(ComboBox comboBox, string value, string fallback)
     {
         var selected = comboBox.Items.OfType<ComboBoxItem>()
-            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), value, StringComparison.Ordinal))
+            .FirstOrDefault(item => string.Equals(GetComboBoxItemValue(item), value, StringComparison.Ordinal))
             ?? comboBox.Items.OfType<ComboBoxItem>()
-                .First(item => string.Equals(item.Content?.ToString(), fallback, StringComparison.Ordinal));
+                .First(item => string.Equals(GetComboBoxItemValue(item), fallback, StringComparison.Ordinal));
         comboBox.SelectedItem = selected;
     }
+
+    private static string GetComboBoxItemValue(ComboBoxItem item) =>
+        item.Tag?.ToString() ?? item.Content?.ToString() ?? "";
+
+    private static string FormatInformationEntryOperation(string operType) =>
+        string.Equals(operType?.Trim(), "G", StringComparison.Ordinal) ? "暂存（G）" : "申报（C）";
 
     private static string FormatFileSize(long bytes) => $"{bytes / 1024d / 1024d:0.00} MB";
 

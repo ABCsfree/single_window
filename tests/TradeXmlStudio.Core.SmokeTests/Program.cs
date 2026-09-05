@@ -85,7 +85,8 @@ static void TestConfigurationRoundTrip(string root)
             CustomsCode = "1108919038",
             SocialCreditCode = "91110108MA0012345X"
         },
-        SupervisingCustomsCode = "3503"
+        SupervisingCustomsCode = "3503",
+        InformationEntryOperType = "G"
     };
 
     ConfigurationStore.Save(path, options);
@@ -93,6 +94,12 @@ static void TestConfigurationRoundTrip(string root)
     Assert(loaded.ExportEnterprise.Name == "出口企业", "exporter configuration should round-trip independently");
     Assert(loaded.ApplicantEnterprise.Name == "申请单位", "applicant configuration should round-trip independently");
     Assert(loaded.SupervisingCustomsCode == "3503", "supervising customs code should round-trip");
+    Assert(loaded.InformationEntryOperType == "G", "information-entry operation type should round-trip");
+
+    var legacyPath = Path.Combine(root, "legacy-trade-xml-config.json");
+    File.WriteAllText(legacyPath, "{}");
+    var legacy = ConfigurationStore.Load(legacyPath);
+    Assert(legacy.InformationEntryOperType == "C", "legacy configuration without an operation type should default to C");
 }
 
 static void TestXmlGeneration(string root)
@@ -154,6 +161,8 @@ static void TestXmlGeneration(string root)
         "main root should use the unqualified ELBP004 contract from the reference message");
     Assert(main.Root?.Element(ns + "Head")?.Element(ns + "ProBatchNumber")?.Value == "PB202608040001",
         "ELBP004 should contain the production batch number");
+    Assert(main.Root?.Element(ns + "OperInfo")?.Element(ns + "OperType")?.Value == "C",
+        "ELBP004 should default to declaration operation type C");
     Assert(main.Root?.Element(ns + "Head")?.Element(ns + "InputEtpsScc")?.Value == "91350781MA2YGJK59J",
         "ELBP004 should contain the independently configured exporter");
     Assert(main.Root?.Element(ns + "Head")?.Element(ns + "AgentScc")?.Value == "91110108MA0012345X",
@@ -310,6 +319,8 @@ static void TestBatchXmlGeneration(string root)
 
     foreach (var photoCount in new[] { 3, 5 })
     {
+        var expectedOperType = photoCount == 3 ? "G" : "C";
+        options.InformationEntryOperType = expectedOperType;
         var variableEntry = new ExcelBatchEntry(800 + photoCount, $"PHOTO-COUNT-{photoCount}");
         var variableRoot = Path.Combine(root, $"batch-{photoCount}-photos");
         var variableFolder = Path.Combine(variableRoot, variableEntry.LotId);
@@ -355,7 +366,10 @@ static void TestBatchXmlGeneration(string root)
 
         var variableMainPath = variableFiles.Single(path =>
             Path.GetFileName(path).StartsWith("ELBP004_", StringComparison.Ordinal));
-        var variableMetadata = XDocument.Load(variableMainPath).Root?
+        var variableMain = XDocument.Load(variableMainPath);
+        Assert(variableMain.Root?.Element(ns + "OperInfo")?.Element(ns + "OperType")?.Value == expectedOperType,
+            $"the {photoCount}-photo ELBP004 should use operation type {expectedOperType}");
+        var variableMetadata = variableMain.Root?
             .Element(ns + "Edocs")?
             .Elements(ns + "Edoc")
             .Select(edoc => edoc.Element(ns + "BizTypeCode")?.Value)

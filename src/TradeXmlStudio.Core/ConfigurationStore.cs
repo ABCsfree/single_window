@@ -35,6 +35,10 @@ public static class ConfigurationStore
             options.Operator ??= new OperatorOptions();
             options.ExportEnterprise ??= new EnterpriseOptions();
             options.ApplicantEnterprise ??= new EnterpriseOptions();
+            if (string.IsNullOrWhiteSpace(options.InformationEntryOperType))
+            {
+                options.InformationEntryOperType = "C";
+            }
             return options;
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or InvalidOperationException)

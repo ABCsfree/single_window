@@ -16,6 +16,7 @@
   },
   "supervisingCustomsCode": "",
   "maxImageBytes": 2359296,
+  "informationEntryOperType": "C",
   "uploadTypeCode": "F",
   "p0FilePath": "",
   "includeP0": false

@@ -365,7 +365,7 @@ public sealed class TradeXmlGenerator
         var operInfo = new XElement(Ns + "OperInfo");
         if (includeOperType)
         {
-            operInfo.Add(new XElement(Ns + "OperType", "C"));
+            operInfo.Add(new XElement(Ns + "OperType", options.InformationEntryOperType.Trim()));
         }
 
         operInfo.Add(
@@ -642,6 +642,11 @@ public sealed class TradeXmlGenerator
         ValidateEnterprise(options.ApplicantEnterprise, "申请单位", errors);
         ValidateExactLength(options.SupervisingCustomsCode, "4位主管海关代码", 4, errors);
 
+        if (string.IsNullOrWhiteSpace(options.InformationEntryOperType)
+            || options.InformationEntryOperType.Trim() is not ("C" or "G"))
+        {
+            errors.Add("信息补录导入方式必须为 C（申报）或 G（暂存）。");
+        }
         if (string.IsNullOrWhiteSpace(options.UploadTypeCode)
             || options.UploadTypeCode.Trim() is not ("F" or "P"))
         {

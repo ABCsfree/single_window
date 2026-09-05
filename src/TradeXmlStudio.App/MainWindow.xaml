@@ -218,22 +218,36 @@
                             </Grid>
                         </GroupBox>
 
-                        <GroupBox Header="附件设置" Padding="12">
+                        <GroupBox Header="信息补录与附件设置" Padding="12">
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="500" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="上传类型代码" />
-                                <ComboBox x:Name="UploadTypeCodeComboBox" Grid.Row="0" Grid.Column="1" Margin="0,5" SelectedIndex="1">
-                                    <ComboBoxItem Content="P" /><ComboBoxItem Content="F" />
-                                </ComboBox>
-                                <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="原附件大小上限（MB）" />
-                                <TextBox x:Name="MaxImageMbTextBox" Grid.Row="1" Grid.Column="1" Margin="0,5" Text="2.25" TextChanged="SingleInputChanged" />
-                                <CheckBox x:Name="P0IncludeCheckBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,10,0,5"
+                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="信息补录导入方式" />
+                                <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,5">
+                                    <ComboBox x:Name="InformationEntryOperTypeComboBox" SelectedIndex="0">
+                                        <ComboBoxItem Tag="C" Content="C — 申报（导入后直接提交）" />
+                                        <ComboBoxItem Tag="G" Content="G — 暂存（导入后暂不申报）" />
+                                    </ComboBox>
+                                    <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="#6B7280" TextWrapping="Wrap"
+                                               Text="C：导入后直接申报；G：导入到暂存区，确认内容后再申报。" />
+                                </StackPanel>
+                                <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="附件上传类型" />
+                                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,5">
+                                    <ComboBox x:Name="UploadTypeCodeComboBox" SelectedIndex="0">
+                                        <ComboBoxItem Tag="F" Content="F — 首次上传（新附件）" />
+                                        <ComboBoxItem Tag="P" Content="P — 重传/补传（已有附件）" />
+                                    </ComboBox>
+                                    <TextBlock Margin="0,5,0,0" FontSize="12" Foreground="#6B7280" TextWrapping="Wrap"
+                                               Text="F/P 仅控制 ELBP005 附件上传，不影响信息补录的暂存或申报。" />
+                                </StackPanel>
+                                <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="原附件大小上限（MB）" />
+                                <TextBox x:Name="MaxImageMbTextBox" Grid.Row="2" Grid.Column="1" Margin="0,5" Text="2.25" TextChanged="SingleInputChanged" />
+                                <CheckBox x:Name="P0IncludeCheckBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,10,0,5"
                                           Content="包含代理委托协议（P0，单独生成 ELBP005 并写入 ELBP004 清单）"
                                           Checked="P0IncludeChanged" Unchecked="P0IncludeChanged" />
-                                <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="P0 文件" />
-                                <TextBox x:Name="P0FilePathTextBox" Grid.Row="3" Grid.Column="1" Margin="0,5" TextChanged="SingleInputChanged" />
-                                <Button Grid.Row="3" Grid.Column="2" Content="浏览…" Click="BrowseP0File_Click" />
+                                <TextBlock Grid.Row="4" Style="{StaticResource FieldLabel}" Text="P0 文件" />
+                                <TextBox x:Name="P0FilePathTextBox" Grid.Row="4" Grid.Column="1" Margin="0,5" TextChanged="SingleInputChanged" />
+                                <Button Grid.Row="4" Grid.Column="2" Content="浏览…" Click="BrowseP0File_Click" />
                             </Grid>
                         </GroupBox>
 
