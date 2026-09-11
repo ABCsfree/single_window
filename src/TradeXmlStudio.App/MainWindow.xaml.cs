@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     private List<ExcelBatchEntry> _batchEntries = [];
     private string? _lastOutputFolder;
     private bool _isReady;
+    private bool _updatingExportProfiles;
+    private ExportEnterpriseProfileManager _exportProfiles = new(new TradeXmlOptions());
 
     public MainWindow()
     {
@@ -194,6 +196,20 @@ public partial class MainWindow : Window
     {
         if (_isReady)
         {
+            RefreshBatchPreview();
+        }
+    }
+
+    private ExcelReadMode GetBatchReadMode() =>
+        BatchReadModeComboBox.SelectedIndex == 1 ? ExcelReadMode.AB : ExcelReadMode.BC;
+
+    private void BatchReadMode_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isReady)
+        {
+            BatchPreviewTitleTextBlock.Text = GetBatchReadMode() == ExcelReadMode.AB
+                ? "批量预览（A 栏序号，B 栏箱号）"
+                : "批量预览（B 栏序号，C 栏箱号）";
             RefreshBatchPreview();
         }
     }
@@ -374,7 +390,7 @@ public partial class MainWindow : Window
 
         try
         {
-            _batchEntries = _batchGenerator.ReadEntries(excelPath, sheetName!).ToList();
+            _batchEntries = _batchGenerator.ReadEntries(excelPath, sheetName!, GetBatchReadMode()).ToList();
             var expectedPhotoCount = GetBatchPhotoCount();
             BatchResultListView.ItemsSource = _batchGenerator.Preview(
                 _batchEntries,
@@ -415,33 +431,132 @@ public partial class MainWindow : Window
             .ToList();
     }
 
-    private TradeXmlOptions BuildOptions() => new()
+    private TradeXmlOptions BuildOptions()
     {
-        Operator = new OperatorOptions
+        CaptureExportProfile();
+        var options = new TradeXmlOptions
         {
-            ICCode = ICCodeTextBox.Text.Trim(),
-            CopCode = CopCodeTextBox.Text.Trim(),
-            OperName = OperNameTextBox.Text.Trim()
-        },
-        ExportEnterprise = new EnterpriseOptions
+            Operator = new OperatorOptions
+            {
+                ICCode = ICCodeTextBox.Text.Trim(),
+                CopCode = CopCodeTextBox.Text.Trim(),
+                OperName = OperNameTextBox.Text.Trim()
+            },
+            ApplicantEnterprise = new EnterpriseOptions
+            {
+                Name = AgentNameTextBox.Text.Trim(),
+                CustomsCode = AgentCustomsCodeTextBox.Text.Trim(),
+                SocialCreditCode = AgentSccTextBox.Text.Trim()
+            },
+            InformationEntryOperType = GetComboBoxValue(InformationEntryOperTypeComboBox, "C"),
+            UploadTypeCode = GetComboBoxValue(UploadTypeCodeComboBox, "F"),
+            MaxImageBytes = ParseMaxImageBytes(),
+            IncludeP0 = P0IncludeCheckBox.IsChecked == true,
+            P0FilePath = P0FilePathTextBox.Text.Trim()
+        };
+        _exportProfiles.ApplyTo(options);
+        return options;
+    }
+
+    private void CaptureExportProfile() => _exportProfiles.UpdateCurrent(new EnterpriseOptions
+    {
+        Name = ExportNameTextBox.Text.Trim(),
+        CustomsCode = ExportCustomsCodeTextBox.Text.Trim(),
+        SocialCreditCode = ExportSccTextBox.Text.Trim()
+    }, SupervisingCustomsCodeTextBox.Text.Trim());
+
+    private void RefreshExportProfiles()
+    {
+        _updatingExportProfiles = true;
+        try
         {
-            Name = ExportNameTextBox.Text.Trim(),
-            CustomsCode = ExportCustomsCodeTextBox.Text.Trim(),
-            SocialCreditCode = ExportSccTextBox.Text.Trim()
-        },
-        ApplicantEnterprise = new EnterpriseOptions
+            ExportProfileComboBox.ItemsSource = _exportProfiles.Profiles.ToList();
+            ExportProfileComboBox.SelectedValue = _exportProfiles.Selected.Id;
+            var profile = _exportProfiles.Selected;
+            ExportNameTextBox.Text = profile.Enterprise.Name;
+            ExportCustomsCodeTextBox.Text = profile.Enterprise.CustomsCode;
+            ExportSccTextBox.Text = profile.Enterprise.SocialCreditCode;
+            SupervisingCustomsCodeTextBox.Text = profile.SupervisingCustomsCode;
+        }
+        finally
         {
-            Name = AgentNameTextBox.Text.Trim(),
-            CustomsCode = AgentCustomsCodeTextBox.Text.Trim(),
-            SocialCreditCode = AgentSccTextBox.Text.Trim()
-        },
-        SupervisingCustomsCode = SupervisingCustomsCodeTextBox.Text.Trim(),
-        InformationEntryOperType = GetComboBoxValue(InformationEntryOperTypeComboBox, "C"),
-        UploadTypeCode = GetComboBoxValue(UploadTypeCodeComboBox, "F"),
-        MaxImageBytes = ParseMaxImageBytes(),
-        IncludeP0 = P0IncludeCheckBox.IsChecked == true,
-        P0FilePath = P0FilePathTextBox.Text.Trim()
-    };
+            _updatingExportProfiles = false;
+        }
+    }
+
+    private void ExportProfile_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_isReady || _updatingExportProfiles || ExportProfileComboBox.SelectedValue is not string id)
+        {
+            return;
+        }
+        CaptureExportProfile();
+        _exportProfiles.Select(id);
+        RefreshExportProfiles();
+        SetStatus($"已切换出口企业方案：{_exportProfiles.Selected.Name}；点击“保存配置”保存。");
+    }
+
+    private void AddExportProfile_Click(object sender, RoutedEventArgs e) => EditExportProfileName(true);
+
+    private void RenameExportProfile_Click(object sender, RoutedEventArgs e) => EditExportProfileName(false);
+
+    private void EditExportProfileName(bool add)
+    {
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = add ? "新增出口企业方案" : "修改方案名",
+            Width = 440,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false
+        };
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new TextBlock { Text = "方案名称", Margin = new Thickness(0, 0, 0, 8) });
+        var nameBox = new TextBox { Text = add ? "" : _exportProfiles.Selected.Name, MaxLength = 100 };
+        panel.Children.Add(nameBox);
+        var error = new TextBlock
+        {
+            Foreground = System.Windows.Media.Brushes.Firebrick,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 8)
+        };
+        panel.Children.Add(error);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "取消", IsCancel = true };
+        var confirm = new Button { Content = add ? "新增" : "确定", IsDefault = true };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(confirm);
+        panel.Children.Add(buttons);
+        dialog.Content = panel;
+        confirm.Click += (_, _) =>
+        {
+            try
+            {
+                CaptureExportProfile();
+                if (add)
+                {
+                    _exportProfiles.Add(nameBox.Text);
+                }
+                else
+                {
+                    _exportProfiles.Rename(nameBox.Text);
+                }
+                dialog.DialogResult = true;
+            }
+            catch (ArgumentException ex)
+            {
+                error.Text = ex.Message;
+            }
+        };
+        dialog.Loaded += (_, _) => { nameBox.Focus(); nameBox.SelectAll(); };
+        if (dialog.ShowDialog() == true)
+        {
+            RefreshExportProfiles();
+            SetStatus($"出口企业方案已{(add ? "新增" : "重命名")}：{_exportProfiles.Selected.Name}；点击“保存配置”保存。");
+        }
+    }
 
     private void LoadConfiguration()
     {
@@ -463,10 +578,8 @@ public partial class MainWindow : Window
         ICCodeTextBox.Text = options.Operator.ICCode;
         CopCodeTextBox.Text = options.Operator.CopCode;
         OperNameTextBox.Text = options.Operator.OperName;
-        ExportNameTextBox.Text = options.ExportEnterprise.Name;
-        ExportCustomsCodeTextBox.Text = options.ExportEnterprise.CustomsCode;
-        ExportSccTextBox.Text = options.ExportEnterprise.SocialCreditCode;
-        SupervisingCustomsCodeTextBox.Text = options.SupervisingCustomsCode;
+        _exportProfiles = new ExportEnterpriseProfileManager(options);
+        RefreshExportProfiles();
         AgentNameTextBox.Text = options.ApplicantEnterprise.Name;
         AgentCustomsCodeTextBox.Text = options.ApplicantEnterprise.CustomsCode;
         AgentSccTextBox.Text = options.ApplicantEnterprise.SocialCreditCode;

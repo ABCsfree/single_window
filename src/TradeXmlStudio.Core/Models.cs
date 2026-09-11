@@ -24,6 +24,8 @@ public sealed record TradeXmlOptions
 
     public OperatorOptions Operator { get; set; } = new();
     public EnterpriseOptions ExportEnterprise { get; set; } = new();
+    public List<ExportEnterpriseProfile> ExportEnterpriseProfiles { get; set; } = [];
+    public string SelectedExportEnterpriseProfileId { get; set; } = "";
     public EnterpriseOptions ApplicantEnterprise { get; set; } = new();
     public string SupervisingCustomsCode { get; set; } = "";
     public long MaxImageBytes { get; set; } = DefaultMaxImageBytes;
@@ -72,6 +74,20 @@ public enum BatchFolderMode
     SmallFolders,
     SerialSmallFolders,
     SingleBigFolder
+}
+
+public enum ExcelReadMode
+{
+    BC,
+    AB
+}
+
+public sealed record ExportEnterpriseProfile
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+    public string Name { get; init; } = "";
+    public EnterpriseOptions Enterprise { get; init; } = new();
+    public string SupervisingCustomsCode { get; init; } = "";
 }
 
 public sealed record ExcelBatchEntry(int Serial, string LotId);

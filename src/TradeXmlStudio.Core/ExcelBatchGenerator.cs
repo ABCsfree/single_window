@@ -11,8 +11,9 @@ public sealed class ExcelBatchGenerator(
 
     public IReadOnlyList<string> ListSheets(string excelPath) => _workbookReader.ListSheets(excelPath);
 
-    public IReadOnlyList<ExcelBatchEntry> ReadEntries(string excelPath, string sheetName) =>
-        _workbookReader.ReadEntries(excelPath, sheetName);
+    public IReadOnlyList<ExcelBatchEntry> ReadEntries(
+        string excelPath, string sheetName, ExcelReadMode readMode = ExcelReadMode.BC) =>
+        _workbookReader.ReadEntries(excelPath, sheetName, readMode);
 
     public IReadOnlyList<ExcelBatchItemResult> Preview(
         IReadOnlyList<ExcelBatchEntry> entries,

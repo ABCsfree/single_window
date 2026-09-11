@@ -109,6 +109,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="Excel 文件" />
@@ -119,38 +120,45 @@
                         <ComboBox x:Name="BatchSheetComboBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
                                   SelectionChanged="BatchSheet_Changed" />
 
-                        <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="通知编号" />
-                        <TextBox x:Name="BatchSeqNoTextBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
+                        <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="读表模式" />
+                        <ComboBox x:Name="BatchReadModeComboBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
+                                  SelectedIndex="0" SelectionChanged="BatchReadMode_Changed">
+                            <ComboBoxItem Content="BC 栏（B 栏序号，C 栏箱号）" />
+                            <ComboBoxItem Content="AB 栏（A 栏序号，B 栏箱号）" />
+                        </ComboBox>
 
-                        <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="生产批次号" />
-                        <TextBox x:Name="BatchProBatchNumberTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
+                        <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="通知编号" />
+                        <TextBox x:Name="BatchSeqNoTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
 
-                        <TextBlock Grid.Row="4" Style="{StaticResource FieldLabel}" Text="影像根目录" />
-                        <TextBox x:Name="BatchBigFolderTextBox" Grid.Row="4" Grid.Column="1" Margin="0,4" TextChanged="BatchInputChanged" />
-                        <Button Grid.Row="4" Grid.Column="2" Content="浏览…" Click="BrowseBatchBigFolder_Click" />
+                        <TextBlock Grid.Row="4" Style="{StaticResource FieldLabel}" Text="生产批次号" />
+                        <TextBox x:Name="BatchProBatchNumberTextBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4" MaxLength="50" />
 
-                        <TextBlock Grid.Row="5" Style="{StaticResource FieldLabel}" Text="匹配模式" />
-                        <ComboBox x:Name="BatchFolderModeComboBox" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
+                        <TextBlock Grid.Row="5" Style="{StaticResource FieldLabel}" Text="影像根目录" />
+                        <TextBox x:Name="BatchBigFolderTextBox" Grid.Row="5" Grid.Column="1" Margin="0,4" TextChanged="BatchInputChanged" />
+                        <Button Grid.Row="5" Grid.Column="2" Content="浏览…" Click="BrowseBatchBigFolder_Click" />
+
+                        <TextBlock Grid.Row="6" Style="{StaticResource FieldLabel}" Text="匹配模式" />
+                        <ComboBox x:Name="BatchFolderModeComboBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
                                   SelectedIndex="0" SelectionChanged="BatchFolderMode_Changed">
                             <ComboBoxItem Content="每个箱号对应一个同名小文件夹" />
                             <ComboBoxItem Content="每个序号对应一个同名小文件夹" />
                             <ComboBoxItem Content="所有照片位于一个大文件夹（数字前缀匹配箱号尾号）" />
                         </ComboBox>
 
-                        <TextBlock Grid.Row="6" Style="{StaticResource FieldLabel}" Text="本批上传张数" />
-                        <ComboBox x:Name="BatchPhotoCountComboBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
+                        <TextBlock Grid.Row="7" Style="{StaticResource FieldLabel}" Text="本批上传张数" />
+                        <ComboBox x:Name="BatchPhotoCountComboBox" Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4"
                                   SelectedIndex="1" SelectionChanged="BatchPhotoCount_Changed">
                             <ComboBoxItem Content="3 张（A1、A2、A3）" />
                             <ComboBoxItem Content="4 张（A1、A2、A3、A4）" />
                             <ComboBoxItem Content="5 张（A1、A2、A3、A4、B1）" />
                         </ComboBox>
 
-                        <TextBlock Grid.Row="7" Style="{StaticResource FieldLabel}" Text="输出目录" />
-                        <TextBox x:Name="BatchOutputFolderTextBox" Grid.Row="7" Grid.Column="1" Margin="0,4" />
-                        <Button Grid.Row="7" Grid.Column="2" Content="浏览…" Click="BrowseBatchOutputFolder_Click" />
+                        <TextBlock Grid.Row="8" Style="{StaticResource FieldLabel}" Text="输出目录" />
+                        <TextBox x:Name="BatchOutputFolderTextBox" Grid.Row="8" Grid.Column="1" Margin="0,4" />
+                        <Button Grid.Row="8" Grid.Column="2" Content="浏览…" Click="BrowseBatchOutputFolder_Click" />
                     </Grid>
 
-                    <TextBlock Grid.Row="1" Text="批量预览（B 列序号，C 列箱号）"
+                    <TextBlock x:Name="BatchPreviewTitleTextBlock" Grid.Row="1" Text="批量预览（B 栏序号，C 栏箱号）"
                                Margin="0,16,0,8" FontWeight="SemiBold" Foreground="#111827" />
                     <ListView x:Name="BatchResultListView" Grid.Row="2" BorderBrush="#D1D5DB">
                         <ListView.View>
@@ -191,18 +199,30 @@
                         </GroupBox>
 
                         <GroupBox Header="出口企业（独立填写）" Margin="0,0,0,12" Padding="12">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="出口企业名称" />
-                                <TextBox x:Name="ExportNameTextBox" Grid.Row="0" Grid.Column="1" Margin="0,5" MaxLength="70" />
-                                <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="出口企业海关十位编码" />
-                                <TextBox x:Name="ExportCustomsCodeTextBox" Grid.Row="1" Grid.Column="1" Margin="0,5" MaxLength="10" />
-                                <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="出口企业统一社会信用代码" />
-                                <TextBox x:Name="ExportSccTextBox" Grid.Row="2" Grid.Column="1" Margin="0,5" MaxLength="18" />
-                                <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="4位主管海关代码" />
-                                <TextBox x:Name="SupervisingCustomsCodeTextBox" Grid.Row="3" Grid.Column="1" Margin="0,5" MaxLength="4" />
-                            </Grid>
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="出口企业方案" />
+                                    <ComboBox x:Name="ExportProfileComboBox" Grid.Column="1" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                              SelectionChanged="ExportProfile_Changed" />
+                                    <Button Grid.Column="2" Content="新增方案" Click="AddExportProfile_Click" />
+                                    <Button Grid.Column="3" Content="修改方案名" Click="RenameExportProfile_Click" />
+                                </Grid>
+                                <TextBlock Text="切换时保留当前编辑；点击“保存配置”保存全部方案及当前选择。"
+                                           Foreground="#6B7280" FontSize="12" Margin="190,0,0,8" TextWrapping="Wrap" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="出口企业名称" />
+                                    <TextBox x:Name="ExportNameTextBox" Grid.Row="0" Grid.Column="1" Margin="0,5" MaxLength="70" />
+                                    <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="出口企业海关十位编码" />
+                                    <TextBox x:Name="ExportCustomsCodeTextBox" Grid.Row="1" Grid.Column="1" Margin="0,5" MaxLength="10" />
+                                    <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="出口企业统一社会信用代码" />
+                                    <TextBox x:Name="ExportSccTextBox" Grid.Row="2" Grid.Column="1" Margin="0,5" MaxLength="18" />
+                                    <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="4位主管海关代码" />
+                                    <TextBox x:Name="SupervisingCustomsCodeTextBox" Grid.Row="3" Grid.Column="1" Margin="0,5" MaxLength="4" />
+                                </Grid>
+                            </StackPanel>
                         </GroupBox>
 
                         <GroupBox Header="申请单位（独立填写）" Margin="0,0,0,12" Padding="12">

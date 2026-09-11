@@ -35,6 +35,7 @@ public static class ConfigurationStore
             options.Operator ??= new OperatorOptions();
             options.ExportEnterprise ??= new EnterpriseOptions();
             options.ApplicantEnterprise ??= new EnterpriseOptions();
+            new ExportEnterpriseProfileManager(options).ApplyTo(options);
             if (string.IsNullOrWhiteSpace(options.InformationEntryOperType))
             {
                 options.InformationEntryOperType = "C";

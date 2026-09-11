@@ -28,8 +28,15 @@ public sealed class OpenXmlWorkbookReader
             .ToList() ?? [];
     }
 
-    public IReadOnlyList<ExcelBatchEntry> ReadEntries(string workbookPath, string sheetName)
+    public IReadOnlyList<ExcelBatchEntry> ReadEntries(
+        string workbookPath, string sheetName, ExcelReadMode readMode = ExcelReadMode.BC)
     {
+        var (serialColumn, lotColumn) = readMode switch
+        {
+            ExcelReadMode.AB => ("A", "B"),
+            ExcelReadMode.BC => ("B", "C"),
+            _ => throw new ArgumentOutOfRangeException(nameof(readMode))
+        };
         using var archive = OpenWorkbook(workbookPath);
         var sheetEntryPath = ResolveSheetPath(archive, sheetName);
         var sharedStrings = ReadSharedStrings(archive);
@@ -46,11 +53,11 @@ public sealed class OpenXmlWorkbookReader
                     Column = GetColumnName((string?)cell.Attribute("r")),
                     Value = ReadCellValue(cell, sharedStrings)
                 })
-                .Where(cell => cell.Column is "B" or "C")
+                .Where(cell => cell.Column == serialColumn || cell.Column == lotColumn)
                 .ToDictionary(cell => cell.Column!, cell => cell.Value, StringComparer.OrdinalIgnoreCase);
 
-            values.TryGetValue("B", out var serialText);
-            values.TryGetValue("C", out var lotId);
+            values.TryGetValue(serialColumn, out var serialText);
+            values.TryGetValue(lotColumn, out var lotId);
             serialText = serialText?.Trim() ?? "";
             lotId ??= "";
 
@@ -62,7 +69,7 @@ public sealed class OpenXmlWorkbookReader
             if (!int.TryParse(serialText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var serial)
                 || serial <= 0)
             {
-                throw new InvalidDataException($"Excel 第 {rowNumber} 行 B 栏序号必须是大于 0 的整数，当前值：{serialText}");
+                throw new InvalidDataException($"Excel 第 {rowNumber} 行 {serialColumn} 栏序号必须是大于 0 的整数，当前值：{serialText}");
             }
             result.Add(new ExcelBatchEntry(serial, lotId));
         }

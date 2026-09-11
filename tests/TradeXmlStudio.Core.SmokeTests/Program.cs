@@ -12,6 +12,7 @@ try
     TestWorkbookReading(testRoot);
     TestSerialFolderMode(testRoot);
     TestConfigurationRoundTrip(testRoot);
+    TestExportEnterpriseProfiles(testRoot);
     TestXmlGeneration(testRoot);
     TestBatchXmlGeneration(testRoot);
     Console.WriteLine("All smoke tests passed.");
@@ -46,6 +47,44 @@ static void TestWorkbookReading(string root)
     Assert(entries.Count == 2, "header and blank lot IDs should be skipped");
     Assert(entries[0] == new ExcelBatchEntry(1, "  BOX00123  "), "lot ID should preserve surrounding spaces from Excel");
     Assert(entries[1] == new ExcelBatchEntry(42, "BOX00124"), "the second GNo should come directly from column B");
+
+    var generator = new ExcelBatchGenerator();
+    Assert(generator.ReadEntries(workbookPath, "批次一").SequenceEqual(entries),
+        "batch reader should default to BC columns");
+    foreach (var mode in new[] { ExcelReadMode.BC, ExcelReadMode.AB })
+    {
+        var modePath = Path.Combine(root, $"batch-{mode}.xlsx");
+        CreateWorkbook(modePath, mode == ExcelReadMode.AB);
+        Assert(generator.ReadEntries(modePath, "批次一", mode).SequenceEqual(entries),
+            $"{mode} should read the selected serial and lot columns, skip headers and blanks, and preserve lot spaces");
+
+        var serialColumn = mode == ExcelReadMode.AB ? "A" : "B";
+        using (var archive = ZipFile.Open(modePath, ZipArchiveMode.Update))
+        {
+            var sheet = archive.GetEntry("xl/worksheets/sheet1.xml")!;
+            XDocument document;
+            using (var stream = sheet.Open())
+            {
+                document = XDocument.Load(stream);
+            }
+            XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            document.Descendants(ns + "c").Single(cell => (string?)cell.Attribute("r") == $"{serialColumn}7")
+                .Element(ns + "v")!.Value = "invalid";
+            sheet.Delete();
+            AddXml(archive, "xl/worksheets/sheet1.xml", document.ToString());
+        }
+
+        var rejected = false;
+        try
+        {
+            generator.ReadEntries(modePath, "批次一", mode);
+        }
+        catch (InvalidDataException ex)
+        {
+            rejected = ex.Message.Contains($"第 7 行 {serialColumn} 栏序号", StringComparison.Ordinal);
+        }
+        Assert(rejected, $"{mode} should report the actual row and serial column for invalid serials");
+    }
 }
 
 static void TestSerialFolderMode(string root)
@@ -100,6 +139,67 @@ static void TestConfigurationRoundTrip(string root)
     File.WriteAllText(legacyPath, "{}");
     var legacy = ConfigurationStore.Load(legacyPath);
     Assert(legacy.InformationEntryOperType == "C", "legacy configuration without an operation type should default to C");
+}
+
+static void TestExportEnterpriseProfiles(string root)
+{
+    var path = Path.Combine(root, "export-profiles.json");
+    var options = new TradeXmlOptions
+    {
+        ExportEnterprise = new EnterpriseOptions { Name = "原出口企业", CustomsCode = "1234567890", SocialCreditCode = "原信用代码" },
+        SupervisingCustomsCode = "2301",
+        ApplicantEnterprise = new EnterpriseOptions { Name = "申请单位" },
+        Operator = new OperatorOptions { OperName = "操作员" }
+    };
+    ConfigurationStore.Save(path, options);
+    options = ConfigurationStore.Load(path);
+    var manager = new ExportEnterpriseProfileManager(options);
+    var originalId = manager.Selected.Id;
+    Assert(manager.Profiles.Count == 1 && manager.Selected.Name == "默认方案"
+        && manager.Selected.Enterprise == options.ExportEnterprise && manager.Selected.SupervisingCustomsCode == "2301",
+        "legacy exporter settings should migrate intact into a default profile");
+
+    manager.UpdateCurrent(options.ExportEnterprise with { Name = "已编辑出口企业" }, "4403");
+    manager.Add("  第二方案  ");
+    var secondId = manager.Selected.Id;
+    Assert(manager.Selected.Name == "第二方案" && manager.Selected.Enterprise.Name == ""
+        && manager.Selected.SupervisingCustomsCode == "", "adding a profile should select a blank independent profile");
+    manager.UpdateCurrent(new EnterpriseOptions { Name = "新出口企业", CustomsCode = "0987654321", SocialCreditCode = "新信用代码" }, "3503");
+    manager.Rename("新方案名");
+    Assert(manager.Selected.Id == secondId && manager.Selected.Enterprise.Name == "新出口企业",
+        "renaming a profile should preserve its identity and enterprise data");
+    manager.Select(originalId);
+    Assert(manager.Selected.Enterprise.Name == "已编辑出口企业" && manager.Selected.SupervisingCustomsCode == "4403",
+        "switching back should preserve edits and restore the profile customs code");
+
+    foreach (var name in new[] { "   ", "新方案名" })
+    {
+        foreach (var rename in new[] { false, true })
+        {
+            var rejected = false;
+            try
+            {
+                if (rename) manager.Rename(name); else manager.Add(name);
+            }
+            catch (ArgumentException) { rejected = true; }
+            Assert(rejected && manager.Profiles.Count == 2 && manager.Selected.Id == originalId,
+                "blank or duplicate profile names should be rejected without changing profiles or selection");
+        }
+    }
+
+    manager.Select(secondId);
+    manager.ApplyTo(options);
+    ConfigurationStore.Save(path, options);
+    var loaded = ConfigurationStore.Load(path);
+    var restored = new ExportEnterpriseProfileManager(loaded);
+    Assert(restored.Profiles.Count == 2 && restored.Selected.Id == secondId && restored.Selected.Name == "新方案名",
+        "all profiles, renamed names and the current selection should survive a configuration reload");
+    Assert(loaded.ExportEnterprise == manager.Selected.Enterprise && loaded.SupervisingCustomsCode == "3503",
+        "XML generation options should use the selected exporter and customs code");
+    Assert(loaded.ApplicantEnterprise.Name == "申请单位" && loaded.Operator.OperName == "操作员",
+        "exporter profile changes should preserve the applicant and operator settings");
+    restored.Select(originalId);
+    Assert(restored.Selected.Enterprise.Name == "已编辑出口企业", "inactive profile edits should also be persisted");
 }
 
 static void TestXmlGeneration(string root)
@@ -379,7 +479,7 @@ static void TestBatchXmlGeneration(string root)
     }
 }
 
-static void CreateWorkbook(string path)
+static void CreateWorkbook(string path, bool useAbColumns = false)
 {
     using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
     AddXml(archive, "xl/workbook.xml", """
@@ -405,11 +505,12 @@ static void CreateWorkbook(string path)
         <?xml version="1.0" encoding="UTF-8"?>
         <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
           <row r="1"><c r="B1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row>
-          <row r="2"><c r="B2"><v>1</v></c><c r="C2" t="s"><v>2</v></c></row>
+          <row r="2"><c r="B2"><v>1</v></c><c r="C2" t="s"><v>2</v></c><c r="D2" t="inlineStr"><is><t>忽略其他栏</t></is></c></row>
           <row r="3"><c r="B3"><v>2</v></c><c r="C3" t="inlineStr"><is><t></t></is></c></row>
           <row r="7"><c r="B7"><v>42</v></c><c r="C7" t="s"><v>3</v></c></row>
         </sheetData></worksheet>
-        """);
+        """.Replace("r=\"B", useAbColumns ? "r=\"A" : "r=\"B")
+            .Replace("r=\"C", useAbColumns ? "r=\"B" : "r=\"C"));
 }
 
 static void AddXml(ZipArchive archive, string name, string content)
