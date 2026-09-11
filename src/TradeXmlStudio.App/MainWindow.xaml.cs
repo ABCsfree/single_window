@@ -500,6 +500,28 @@ public partial class MainWindow : Window
 
     private void RenameExportProfile_Click(object sender, RoutedEventArgs e) => EditExportProfileName(false);
 
+    private void DeleteExportProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (_exportProfiles.Profiles.Count == 1)
+        {
+            MessageBox.Show(this, "至少需要保留一个出口企业方案，无法删除最后一个方案。",
+                "无法删除方案", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var name = _exportProfiles.Selected.Name;
+        if (MessageBox.Show(this,
+                $"确定删除出口企业方案“{name}”及其企业信息吗？点击“保存配置”后保存删除结果。",
+                "删除方案", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _exportProfiles.DeleteCurrent();
+        RefreshExportProfiles();
+        SetStatus($"已删除方案：{name}；已切换到：{_exportProfiles.Selected.Name}；点击“保存配置”保存。");
+    }
+
     private void EditExportProfileName(bool add)
     {
         var dialog = new Window

@@ -201,14 +201,15 @@
                         <GroupBox Header="出口企业（独立填写）" Margin="0,0,0,12" Padding="12">
                             <StackPanel>
                                 <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="出口企业方案" />
                                     <ComboBox x:Name="ExportProfileComboBox" Grid.Column="1" DisplayMemberPath="Name" SelectedValuePath="Id"
                                               SelectionChanged="ExportProfile_Changed" />
                                     <Button Grid.Column="2" Content="新增方案" Click="AddExportProfile_Click" />
                                     <Button Grid.Column="3" Content="修改方案名" Click="RenameExportProfile_Click" />
+                                    <Button Grid.Column="4" Content="删除方案" Click="DeleteExportProfile_Click" />
                                 </Grid>
-                                <TextBlock Text="切换时保留当前编辑；点击“保存配置”保存全部方案及当前选择。"
+                                <TextBlock Text="切换时保留当前编辑；点击“保存配置”保存全部方案、删除操作及当前选择。"
                                            Foreground="#6B7280" FontSize="12" Margin="190,0,0,8" TextWrapping="Wrap" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>

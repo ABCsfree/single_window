@@ -13,6 +13,7 @@ try
     TestSerialFolderMode(testRoot);
     TestConfigurationRoundTrip(testRoot);
     TestExportEnterpriseProfiles(testRoot);
+    TestExportEnterpriseProfileDeletion(testRoot);
     TestXmlGeneration(testRoot);
     TestBatchXmlGeneration(testRoot);
     Console.WriteLine("All smoke tests passed.");
@@ -200,6 +201,42 @@ static void TestExportEnterpriseProfiles(string root)
         "exporter profile changes should preserve the applicant and operator settings");
     restored.Select(originalId);
     Assert(restored.Selected.Enterprise.Name == "已编辑出口企业", "inactive profile edits should also be persisted");
+}
+
+static void TestExportEnterpriseProfileDeletion(string root)
+{
+    var options = new TradeXmlOptions();
+    var manager = new ExportEnterpriseProfileManager(options);
+    var firstId = manager.Selected.Id;
+    manager.Add("第二方案");
+    var secondId = manager.Selected.Id;
+    manager.UpdateCurrent(new EnterpriseOptions { Name = "保留企业" }, "3503");
+    manager.Add("第三方案");
+    var thirdId = manager.Selected.Id;
+
+    manager.Select(firstId);
+    manager.DeleteCurrent();
+    Assert(manager.Profiles.Count == 2 && manager.Selected.Id == secondId
+        && manager.Selected.Enterprise.Name == "保留企业" && manager.Selected.SupervisingCustomsCode == "3503",
+        "deleting the first profile should select the next profile and preserve its enterprise data");
+    manager.Select(thirdId);
+    manager.DeleteCurrent();
+    Assert(manager.Profiles.Count == 1 && manager.Selected.Id == secondId,
+        "deleting the last profile in the list should select the preceding profile");
+
+    manager.ApplyTo(options);
+    var path = Path.Combine(root, "deleted-export-profiles.json");
+    ConfigurationStore.Save(path, options);
+    var loaded = ConfigurationStore.Load(path);
+    Assert(loaded.ExportEnterpriseProfiles.Count == 1 && loaded.SelectedExportEnterpriseProfileId == secondId
+        && loaded.ExportEnterprise.Name == "保留企业" && loaded.SupervisingCustomsCode == "3503",
+        "saving and reloading should preserve deletion and use the remaining exporter for XML generation");
+
+    var rejected = false;
+    try { manager.DeleteCurrent(); }
+    catch (InvalidOperationException) { rejected = true; }
+    Assert(rejected && manager.Profiles.Count == 1 && manager.Selected.Id == secondId,
+        "deleting the only remaining profile should be rejected without changing its data or selection");
 }
 
 static void TestXmlGeneration(string root)

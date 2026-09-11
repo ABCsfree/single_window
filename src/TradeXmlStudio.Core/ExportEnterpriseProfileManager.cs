@@ -47,6 +47,16 @@ public sealed class ExportEnterpriseProfileManager
         _profiles[_selectedIndex] = Selected with { Name = ValidateName(name, Selected.Id) };
     }
 
+    public void DeleteCurrent()
+    {
+        if (_profiles.Count == 1)
+        {
+            throw new InvalidOperationException("至少需要保留一个出口企业方案，无法删除最后一个方案。");
+        }
+        _profiles.RemoveAt(_selectedIndex);
+        _selectedIndex = Math.Min(_selectedIndex, _profiles.Count - 1);
+    }
+
     public void Select(string id)
     {
         var index = _profiles.FindIndex(profile => profile.Id == id);
