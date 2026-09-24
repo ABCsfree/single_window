@@ -79,22 +79,6 @@ public sealed class ExcelBatchGenerator(
                 continue;
             }
 
-            var oversized = options.MaxImageBytes > 0
-                ? photos.FirstOrDefault(path => new FileInfo(path).Length > options.MaxImageBytes)
-                : null;
-            if (oversized is not null)
-            {
-                results[index] = new ExcelBatchItemResult(
-                    entry.Serial,
-                    entry.LotId,
-                    photoFolder,
-                    photos.Count,
-                    "失败",
-                    $"附件超过大小限制：{Path.GetFileName(oversized)}。",
-                    false);
-                continue;
-            }
-
             prepared.Add((index, entry, photoFolder, photos));
         }
 

@@ -1,4 +1,7 @@
 using System.IO.Compression;
+using System.IO;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Text;
 using System.Xml.Linq;
 using TradeXmlStudio.Core;
@@ -16,6 +19,7 @@ try
     TestExportEnterpriseProfileDeletion(testRoot);
     TestXmlGeneration(testRoot);
     TestBatchXmlGeneration(testRoot);
+    TestAttachmentConversion(testRoot, args.FirstOrDefault());
     Console.WriteLine("All smoke tests passed.");
     return 0;
 }
@@ -247,7 +251,7 @@ static void TestXmlGeneration(string root)
     Directory.CreateDirectory(outputFolder);
     for (var index = 1; index <= 4; index++)
     {
-        File.WriteAllBytes(Path.Combine(photoFolder, $"{index}.jpg"), [(byte)'x', (byte)index]);
+        File.WriteAllBytes(Path.Combine(photoFolder, $"{index}.jpg"), CreateImage(false));
     }
     var p0Path = Path.Combine(root, "代理报检委托书.pdf");
     File.WriteAllBytes(p0Path, [(byte)'p', (byte)'0']);
@@ -273,7 +277,7 @@ static void TestXmlGeneration(string root)
             SocialCreditCode = "91110108MA0012345X"
         },
         SupervisingCustomsCode = "3503",
-        MaxImageBytes = 2,
+        MaxImageBytes = 1024,
         UploadTypeCode = "F",
         IncludeP0 = true,
         P0FilePath = p0Path
@@ -365,7 +369,7 @@ static void TestBatchXmlGeneration(string root)
         Directory.CreateDirectory(folder);
         for (var index = 1; index <= 4; index++)
         {
-            File.WriteAllBytes(Path.Combine(folder, $"{entry.Serial}-{index}.jpg"), [(byte)entry.Serial, (byte)index]);
+            File.WriteAllBytes(Path.Combine(folder, $"{entry.Serial}-{index}.jpg"), CreateImage(false));
         }
     }
 
@@ -466,7 +470,7 @@ static void TestBatchXmlGeneration(string root)
         Directory.CreateDirectory(variableOutput);
         for (var index = 1; index <= photoCount; index++)
         {
-            File.WriteAllBytes(Path.Combine(variableFolder, $"{index}.jpg"), [(byte)'v', (byte)index]);
+            File.WriteAllBytes(Path.Combine(variableFolder, $"{index}.jpg"), CreateImage(false));
         }
 
         var batchGenerator = new ExcelBatchGenerator();
@@ -514,6 +518,98 @@ static void TestBatchXmlGeneration(string root)
         Assert(variableMetadata.SequenceEqual(expectedCodes.Append("P0")),
             $"the {photoCount}-photo ELBP004 metadata should use the requested business type codes followed by P0");
     }
+}
+
+static byte[] CreateImage(bool large)
+{
+    var size = large ? 1024 : 8;
+    var pixels = new byte[size * size * 3];
+    for (var y = 0; y < size; y++)
+        for (var x = 0; x < size; x++)
+        {
+            var offset = (y * size + x) * 3;
+            pixels[offset] = (byte)(x / 4);
+            pixels[offset + 1] = (byte)(y / 4);
+            pixels[offset + 2] = 128;
+        }
+    var bitmap = BitmapSource.Create(size, size, 96, 96, PixelFormats.Bgr24, null, pixels, size * 3);
+    BitmapEncoder encoder = large ? new BmpBitmapEncoder() : new PngBitmapEncoder();
+    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+    using var output = new MemoryStream();
+    encoder.Save(output);
+    return output.ToArray();
+}
+
+static void TestAttachmentConversion(string root, string? samplePath)
+{
+    var input = Path.Combine(root, "conversion-input");
+    var output = Path.Combine(root, "conversion-output");
+    Directory.CreateDirectory(input);
+    Directory.CreateDirectory(output);
+    var original = CreateImage(true);
+    if (samplePath is not null)
+        original = Convert.FromBase64String(XDocument.Load(samplePath).Root!.Element("Edoc")!.Element("FileContent")!.Value);
+    var small = CreateImage(false);
+    for (var i = 1; i <= 4; i++)
+        File.WriteAllBytes(Path.Combine(input, $"{i}.jpg"), i == 1 ? original : small);
+    var options = new TradeXmlOptions
+    {
+        Operator = new() { ICCode = "1234567890", OperName = "Test" },
+        ExportEnterprise = new() { Name = "Test", CustomsCode = "1234567890", SocialCreditCode = "123456789012345678" },
+        ApplicantEnterprise = new() { Name = "Test", CustomsCode = "1234567890", SocialCreditCode = "123456789012345678" },
+        SupervisingCustomsCode = "1234"
+    };
+    var request = new XmlGenerationRequest(input, output, "TEST", "BATCH", "1", "LOT", DateTimeOffset.Now);
+    var generator = new TradeXmlGenerator();
+    var results = generator.GenerateToFiles(request, options, false);
+    var metadata = results[0].Document.Root!.Element("Edocs")!.Elements("Edoc").ToList();
+    for (var i = 1; i <= 4; i++)
+    {
+        var edoc = XDocument.Load(results[i].OutputPath).Root!.Element("Edoc")!;
+        var bytes = Convert.FromBase64String(edoc.Element("FileContent")!.Value);
+        using var stream = new MemoryStream(bytes);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        Assert(i == 1 ? decoder is JpegBitmapDecoder : decoder is PngBitmapDecoder,
+            "oversized photo should become JPEG; small PNG with jpg suffix should retain PNG bytes");
+        foreach (var field in new[] { "EdocID", "AttTypeCode", "AttEdocName" })
+            Assert(edoc.Element(field)!.Value == metadata[i - 1].Element(field)!.Value,
+                $"prepared attachment {field} should match in both messages");
+        Assert(edoc.Element("AttTypeCode")!.Value == (i == 1 ? "jpg" : "png")
+            && edoc.Element("AttEdocName")!.Value == $"{i}." + (i == 1 ? "jpg" : "png"),
+            "declared type and filename should match the encoded image");
+        Assert(bytes.Length <= options.MaxImageBytes && new FileInfo(results[i].OutputPath).Length < 3 * 1024 * 1024 - 64 * 1024,
+            "attachment and actual XML sizes should fit the configured and conservative budgets");
+        if (i == 1)
+        {
+            using var beforeStream = new MemoryStream(original);
+            var before = BitmapDecoder.Create(beforeStream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
+            Assert(decoder.Frames[0].PixelWidth == before.PixelWidth && decoder.Frames[0].PixelHeight == before.PixelHeight,
+                "compression should preserve pixel dimensions");
+            Console.WriteLine($"Conversion: {original.Length} -> {bytes.Length} bytes; XML {new FileInfo(results[i].OutputPath).Length} bytes.");
+        }
+        else Assert(bytes.SequenceEqual(small), "small images should not be re-encoded");
+    }
+    Assert(File.ReadAllBytes(Path.Combine(input, "1.jpg")).SequenceEqual(original), "original photo should remain unchanged");
+    var batchOutput = Path.Combine(root, "conversion-batch");
+    Directory.CreateDirectory(batchOutput);
+    var batch = new ExcelBatchGenerator().RunBatch([new(1, "conversion-input")], root, batchOutput,
+        BatchFolderMode.SmallFolders, "TEST", "BATCH", DateTimeOffset.Now, options, false);
+    Assert(batch.Single().Success, "batch path should allow oversized originals to reach compression");
+
+    var blockedOutput = Path.Combine(root, "conversion-blocked");
+    Directory.CreateDirectory(blockedOutput);
+    options.MaxImageBytes = 1;
+    var rejected = false;
+    try { generator.GenerateToFiles(request with { OutputFolderPath = blockedOutput }, options, false); }
+    catch (XmlGenerationException ex) { rejected = ex.Message.Contains("质量降至 80"); }
+    Assert(rejected && !Directory.EnumerateFiles(blockedOutput, "*.xml").Any(),
+        "impossible compression target should fail before writing any XML");
+    options.MaxImageBytes = TradeXmlOptions.DefaultMaxImageBytes;
+    File.WriteAllBytes(Path.Combine(input, "1.jpg"), [1, 2, 3]);
+    rejected = false;
+    try { generator.GenerateToFiles(request with { OutputFolderPath = blockedOutput }, options, false); }
+    catch (XmlGenerationException ex) { rejected = ex.Message.Contains("图片读取或转换失败"); }
+    Assert(rejected && !Directory.EnumerateFiles(blockedOutput, "*.xml").Any(), "corrupt photo should fail before writing any XML");
 }
 
 static void CreateWorkbook(string path, bool useAbColumns = false)

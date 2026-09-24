@@ -105,6 +105,7 @@ public sealed class TradeXmlGenerator
                     photoBizTypeCodes[index],
                     GetAttachmentType(path),
                     false);
+                source = AttachmentPreparer.Prepare(source, options);
                 batchEdocs.Add(new BatchEdoc(item.LotId, source, CreateEdocId(source, generatedAt, options)));
             }
         }
@@ -113,6 +114,7 @@ public sealed class TradeXmlGenerator
         {
             var p0Path = Path.GetFullPath(options.P0FilePath);
             var source = new EdocSource(Path.GetFileName(p0Path), p0Path, "P0", GetAttachmentType(p0Path), true);
+            source = AttachmentPreparer.Prepare(source, options);
             batchEdocs.Add(new BatchEdoc("", source, CreateEdocId(source, generatedAt, options)));
         }
 
@@ -198,6 +200,7 @@ public sealed class TradeXmlGenerator
         }
 
         var source = new EdocSource(Path.GetFileName(fullPath), fullPath, "P0", GetAttachmentType(fullPath), true);
+        source = AttachmentPreparer.Prepare(source, options);
         var edocId = CreateEdocId(source, generatedAt, options);
         var document = BuildElbp005(source, edocId, options, CreateClientSequenceNo(generatedAt));
         return WriteDocument(document, outputFolderPath, $"0_P0_{CreateFileTimestamp()}.xml", overwrite);
@@ -260,7 +263,8 @@ public sealed class TradeXmlGenerator
         TradeXmlOptions options,
         bool overwrite)
     {
-        var orderedSources = sources.OrderBy(source => source.IsP0).ToList();
+        var orderedSources = sources.OrderBy(source => source.IsP0)
+            .Select(source => AttachmentPreparer.Prepare(source, options)).ToList();
         var batchEdocs = orderedSources
             .Select(source => new BatchEdoc(
                 source.IsP0 ? "" : request.LotId.Trim(),
@@ -352,8 +356,12 @@ public sealed class TradeXmlGenerator
                 new XElement(Ns + "AttFmtTypeCode", "US"),
                 new XElement(Ns + "AttEdocName", source.FileName),
                 new XElement(Ns + "UploadTypeCode", options.UploadTypeCode.Trim()),
-                new XElement(Ns + "FileContent", Convert.ToBase64String(File.ReadAllBytes(source.FullPath)))));
-        return new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+                new XElement(Ns + "FileContent", Convert.ToBase64String(source.PreparedContent
+                    ?? throw new InvalidOperationException("附件尚未准备。")))));
+        var document = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+        if (Utf8WithoutBom.GetByteCount(ToXmlText(document)) > AttachmentPreparer.XmlBudget)
+            throw new XmlGenerationException([$"{source.FileName}：生成的 XML 超过本程序的保守大小目标，请手动压缩附件。"]);
+        return document;
     }
 
     private static XElement BuildOperatorInfo(
@@ -702,7 +710,7 @@ public sealed class TradeXmlGenerator
         foreach (var path in paths)
         {
             var rawLength = new FileInfo(path).Length;
-            if (rawLength > options.MaxImageBytes)
+            if (!IsSupportedPhoto(path) && rawLength > options.MaxImageBytes)
             {
                 errors.Add(
                     $"附件超过大小限制：{Path.GetFileName(path)}，原文件 "

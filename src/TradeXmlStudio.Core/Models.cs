@@ -61,7 +61,10 @@ public sealed record EdocSource(
     string FullPath,
     string BizTypeCode,
     string AttTypeCode,
-    bool IsP0);
+    bool IsP0)
+{
+    internal byte[]? PreparedContent { get; init; }
+}
 
 public sealed class XmlGenerationException(IReadOnlyList<string> errors)
     : Exception(string.Join(Environment.NewLine, errors))
